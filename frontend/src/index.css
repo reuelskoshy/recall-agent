@@ -1,0 +1,78 @@
+:root {
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --text: #1a1a1e;
+  --muted: #6b6b76;
+  --border: #e3e3e8;
+  --ok: #1a7f37;
+  --bad: #b42318;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141417;
+    --surface: #1d1d21;
+    --text: #ececf1;
+    --muted: #9a9aa5;
+    --border: #2e2e35;
+    --ok: #4ac26b;
+    --bad: #f97066;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.app-main {
+  padding: 24px 0;
+  color: var(--muted);
+}
+
+.badge {
+  font-size: 0.8rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.badge-ok {
+  color: var(--ok);
+  border-color: currentColor;
+}
+
+.badge-bad {
+  color: var(--bad);
+  border-color: currentColor;
+}

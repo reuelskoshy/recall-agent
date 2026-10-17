@@ -1,0 +1,28 @@
+# Secrets
+.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Uploaded documents (Phase 3)
+backend/data/uploads/
+
+# Editors / local tooling
+.idea/
+.vscode/
+.claude/
+.remember/
+.DS_Store

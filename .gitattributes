@@ -1,0 +1,5 @@
+# Normalize line endings: files run inside Linux containers must use LF.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
