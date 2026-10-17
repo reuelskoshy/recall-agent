@@ -99,6 +99,8 @@ class SnowflakeBackend(SqlBackend):
             "login_timeout": 20,
             "query_timeout": timeout_s,  # client-side cancel, on top of the server timeout
             "client_session_keep_alive": True,
+            # Always log out on close (we never leave async queries running).
+            "enable_server_session_keep_alive_auto_detection": False,
             "session_parameters": {
                 "STATEMENT_TIMEOUT_IN_SECONDS": timeout_s,
                 "TIMEZONE": "UTC",
