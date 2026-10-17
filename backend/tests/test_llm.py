@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.llm.base import (
     ChatMessage,
     LLMError,
+    ReasoningDelta,
     StreamEnd,
     StreamEvent,
     TextDelta,
@@ -170,3 +171,41 @@ async def test_fake_provider_echoes_when_script_is_exhausted() -> None:
 
 def test_blank_base_url_is_treated_as_unset() -> None:
     assert Settings(llm_base_url="").llm_base_url is None
+
+
+async def test_openai_stream_emits_reasoning_from_nonstandard_delta_field() -> None:
+    reasoning_chunk = ChatCompletionChunk.model_validate(
+        {
+            "id": "c1",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "m",
+            "choices": [{"index": 0, "delta": {"reasoning": "Think first."}}],
+        }
+    )
+    provider = provider_with_chunks(
+        [reasoning_chunk, chunk(content="Hi"), chunk(finish_reason="stop")]
+    )
+
+    events = await collect(provider)
+
+    assert events[:2] == [ReasoningDelta("Think first."), TextDelta("Hi")]
+
+
+def test_reasoning_field_is_sent_back_on_every_assistant_message_when_configured() -> None:
+    with_reasoning = ChatMessage(role="assistant", content="Hi", reasoning="greet")
+    without = ChatMessage(role="assistant", content="Old reply")  # stored before capture existed
+    user = ChatMessage(role="user", content="hi")
+
+    assert to_openai_message(with_reasoning, "reasoning")["reasoning"] == "greet"
+    assert to_openai_message(without, "reasoning")["reasoning"] == ""  # IFM accepts ""
+    assert "reasoning" not in to_openai_message(user, "reasoning")
+    assert "reasoning" not in to_openai_message(with_reasoning)  # off by default (OpenAI)
+
+
+def test_factory_passes_reasoning_field_and_blank_means_unset() -> None:
+    settings = Settings(llm_provider="openai", llm_api_key="k", llm_reasoning_field="reasoning")
+    provider = build_provider(settings)
+    assert isinstance(provider, OpenAIProvider)
+    assert provider.reasoning_field == "reasoning"
+    assert Settings(llm_reasoning_field="").llm_reasoning_field is None

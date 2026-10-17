@@ -7,6 +7,7 @@ from app.llm.base import (
     ChatMessage,
     LLMError,
     LLMProvider,
+    ReasoningDelta,
     StreamEnd,
     StreamEvent,
     TextDelta,
@@ -25,6 +26,7 @@ class ScriptedTurn:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     error: str | None = None
+    reasoning: str = ""
 
 
 class FakeProvider(LLMProvider):
@@ -53,6 +55,8 @@ class FakeProvider(LLMProvider):
             last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
             turn = ScriptedTurn(text=f"(fake model) You said: {last_user}")
 
+        if turn.reasoning:
+            yield ReasoningDelta(turn.reasoning)
         words = turn.text.split(" ") if turn.text else []
         for i, word in enumerate(words):
             yield TextDelta(word if i == 0 else f" {word}")

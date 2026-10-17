@@ -212,3 +212,30 @@ class _Any:
 
 
 ANY: Any = _Any()
+
+
+async def test_reasoning_is_stored_and_sent_back_in_the_next_turn(
+    app: FastAPI, client: AsyncClient
+) -> None:
+    """Regression: IFM rejects multi-turn history whose assistant messages lack reasoning."""
+    fake = use_fake(
+        app,
+        ScriptedTurn(reasoning="Need the calculator.", tool_calls=[calc("6*7")]),
+        ScriptedTurn(reasoning="Report 42.", text="42"),
+        ScriptedTurn(text="You're welcome."),
+    )
+    first = await chat(client, "6*7?")
+    conversation_id = first[0][1]["conversation_id"]
+
+    response = await client.post(
+        "/api/chat", json={"message": "thanks", "conversation_id": conversation_id}
+    )
+    assert response.status_code == 200
+
+    history, _ = fake.calls[2]
+    assistants = [m for m in history if m.role == "assistant"]
+    assert [(m.content, m.reasoning) for m in assistants] == [
+        ("", "Need the calculator."),
+        ("42", "Report 42."),
+    ]
+    assert all(e[0] != "token" or "Report" not in e[1]["text"] for e in first)  # never shown

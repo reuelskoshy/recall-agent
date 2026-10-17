@@ -40,6 +40,7 @@ from app.llm.base import (
     FinishReason,
     LLMError,
     LLMProvider,
+    ReasoningDelta,
     StreamEnd,
     TextDelta,
     ToolCall,
@@ -107,6 +108,7 @@ def _elapsed_ms(start: float) -> int:
 @dataclass
 class _ModelReply:
     text: str
+    reasoning: str
     calls: list[ToolCall]
     usage: Usage | None
     finish_reason: FinishReason
@@ -237,14 +239,17 @@ async def run_turn(
 
             # 1. Call the model, streaming its text to the client as it arrives.
             started = time.perf_counter()
-            reply = _ModelReply(text="", calls=[], usage=None, finish_reason="stop")
+            reply = _ModelReply(text="", reasoning="", calls=[], usage=None, finish_reason="stop")
             parts: list[str] = []
+            reasoning_parts: list[str] = []
             async for event in provider.stream_chat(
                 prompt, registry.specs() if tools_allowed else ()
             ):
                 if isinstance(event, TextDelta):
                     parts.append(event.text)
                     yield Token(text=event.text)
+                elif isinstance(event, ReasoningDelta):
+                    reasoning_parts.append(event.text)
                 elif isinstance(event, ToolCallEvent):
                     reply.calls.append(event.call)
                 elif isinstance(event, UsageEvent):
@@ -252,12 +257,18 @@ async def run_turn(
                 elif isinstance(event, StreamEnd):
                     reply.finish_reason = event.finish_reason
             reply.text = "".join(parts)
+            reply.reasoning = "".join(reasoning_parts)
             recorder.llm_step(iteration, provider.model, _elapsed_ms(started), reply)
 
             # 2. No tool calls (or no tools allowed): this is the final answer.
             if not reply.calls or not tools_allowed:
                 text = reply.text if reply.text.strip() else EMPTY_ANSWER_FALLBACK
-                final = Message(conversation=conversation, role="assistant", content=text)
+                final = Message(
+                    conversation=conversation,
+                    role="assistant",
+                    content=text,
+                    reasoning=reply.reasoning or None,
+                )
                 session.add(final)
                 recorder.finish("completed", iteration)
                 await session.commit()
@@ -280,7 +291,10 @@ async def run_turn(
             )
 
             assistant = ChatMessage(
-                role="assistant", content=reply.text, tool_calls=tuple(reply.calls)
+                role="assistant",
+                content=reply.text,
+                tool_calls=tuple(reply.calls),
+                reasoning=reply.reasoning,
             )
             messages.append(assistant)
             session.add(
@@ -288,6 +302,7 @@ async def run_turn(
                     conversation=conversation,
                     role="assistant",
                     content=reply.text,
+                    reasoning=reply.reasoning or None,
                     tool_calls=[
                         {"id": c.id, "name": c.name, "arguments": c.arguments} for c in reply.calls
                     ],

@@ -34,6 +34,12 @@ class Settings(BaseSettings):
         default=None, description="Point at any OpenAI-compatible server, e.g. Ollama's /v1."
     )
 
+    llm_reasoning_field: str | None = Field(
+        default=None,
+        description="Send each assistant message's reasoning back under this key "
+        "(e.g. 'reasoning' for IFM K2). Leave unset for OpenAI.",
+    )
+
     chat_history_limit: int = Field(
         default=20, description="Max past messages sent to the model (token-aware in Phase 5)."
     )
@@ -47,10 +53,10 @@ class Settings(BaseSettings):
         default=4000, description="Tool output longer than this is truncated before the LLM."
     )
 
-    @field_validator("llm_base_url", mode="before")
+    @field_validator("llm_base_url", "llm_reasoning_field", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
-        """Treat `LLM_BASE_URL=` (blank in .env) as unset."""
+        """Treat blank values in .env (e.g. `LLM_BASE_URL=`) as unset."""
         return None if value == "" else value
 
 

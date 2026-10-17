@@ -21,7 +21,11 @@ def to_chat_message(row: Message) -> ChatMessage:
     )
     role: Role = row.role  # type: ignore[assignment]  # constrained on write
     return ChatMessage(
-        role=role, content=row.content, tool_calls=calls, tool_call_id=row.tool_call_id
+        role=role,
+        content=row.content,
+        tool_calls=calls,
+        tool_call_id=row.tool_call_id,
+        reasoning=row.reasoning or "",
     )
 
 
@@ -52,7 +56,11 @@ def sanitize_tool_pairs(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
                 out.append(message)
                 out.extend(results)
             elif message.content:
-                out.append(ChatMessage(role="assistant", content=message.content))
+                out.append(
+                    ChatMessage(
+                        role="assistant", content=message.content, reasoning=message.reasoning
+                    )
+                )
             i = j
             continue
         out.append(message)

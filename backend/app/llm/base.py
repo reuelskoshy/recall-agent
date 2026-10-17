@@ -26,6 +26,8 @@ class ChatMessage:
     """One message in a conversation, in provider-neutral form.
 
     - assistant messages may carry `tool_calls` (and empty `content`)
+    - assistant messages may carry `reasoning`: a reasoning model's hidden
+      thinking, which some providers require to be sent back in history
     - tool messages carry the `tool_call_id` they answer
     """
 
@@ -33,6 +35,7 @@ class ChatMessage:
     content: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
+    reasoning: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +53,13 @@ class ToolSpec:
 @dataclass(frozen=True, slots=True)
 class TextDelta:
     """A chunk of assistant text, to forward to the UI as it arrives."""
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningDelta:
+    """A chunk of a reasoning model's thinking (not part of the answer)."""
 
     text: str
 
@@ -91,7 +101,7 @@ class StreamEnd:
     finish_reason: FinishReason
 
 
-StreamEvent = TextDelta | ToolCallEvent | UsageEvent | StreamEnd
+StreamEvent = TextDelta | ReasoningDelta | ToolCallEvent | UsageEvent | StreamEnd
 
 
 class LLMError(Exception):
@@ -115,6 +125,7 @@ class LLMProvider(ABC):
     ) -> AsyncIterator[StreamEvent]:
         """Stream one model response.
 
-        Yields any number of `TextDelta` / `ToolCallEvent` / `UsageEvent`, then
+        Yields any number of `TextDelta` / `ReasoningDelta` / `ToolCallEvent` /
+        `UsageEvent`, then
         exactly one `StreamEnd`. Raises `LLMError` on upstream failure.
         """

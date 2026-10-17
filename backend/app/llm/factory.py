@@ -16,6 +16,7 @@ PROVIDERS: dict[str, ProviderFactory] = {
         model=s.llm_chat_model,
         base_url=s.llm_base_url,
         timeout_s=s.llm_timeout_s,
+        reasoning_field=s.llm_reasoning_field,
     ),
     "fake": lambda _s: FakeProvider(),
 }

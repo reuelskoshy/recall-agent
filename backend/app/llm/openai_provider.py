@@ -12,6 +12,7 @@ from app.llm.base import (
     FinishReason,
     LLMError,
     LLMProvider,
+    ReasoningDelta,
     StreamEnd,
     StreamEvent,
     TextDelta,
@@ -22,12 +23,22 @@ from app.llm.base import (
     UsageEvent,
 )
 
+# Field names OpenAI-compatible servers use for reasoning text in stream deltas.
+REASONING_DELTA_FIELDS = ("reasoning", "reasoning_content")
 
-def to_openai_message(message: ChatMessage) -> dict[str, Any]:
-    """Convert a neutral `ChatMessage` into an OpenAI chat message dict."""
+
+def to_openai_message(message: ChatMessage, reasoning_field: str | None = None) -> dict[str, Any]:
+    """Convert a neutral `ChatMessage` into an OpenAI chat message dict.
+
+    With `reasoning_field` set, every assistant message carries its reasoning
+    under that key ("" when none was recorded). Some reasoning-model servers
+    (e.g. IFM) reject multi-turn history without it; OpenAI itself does not use it.
+    """
     if message.role == "tool":
         return {"role": "tool", "tool_call_id": message.tool_call_id, "content": message.content}
     out: dict[str, Any] = {"role": message.role, "content": message.content}
+    if reasoning_field and message.role == "assistant":
+        out[reasoning_field] = message.reasoning
     if message.tool_calls:
         # Some OpenAI-compatible servers reject "" here; null is the canonical value.
         out["content"] = message.content or None
@@ -109,10 +120,12 @@ class OpenAIProvider(LLMProvider):
         model: str,
         base_url: str | None = None,
         timeout_s: float = 60.0,
+        reasoning_field: str | None = None,
     ) -> None:
         if not api_key:
             raise LLMError("LLM_API_KEY is not set (or use LLM_PROVIDER=fake)")
         self.model = model
+        self.reasoning_field = reasoning_field
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_s)
 
     async def stream_chat(
@@ -123,7 +136,7 @@ class OpenAIProvider(LLMProvider):
         """Stream one completion, normalizing chunks into neutral events."""
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": [to_openai_message(m) for m in messages],
+            "messages": [to_openai_message(m, self.reasoning_field) for m in messages],
             "stream": True,
             "stream_options": {"include_usage": True},
         }
@@ -140,6 +153,12 @@ class OpenAIProvider(LLMProvider):
                     yield UsageEvent(usage)
                 for choice in chunk.choices:
                     delta = choice.delta
+                    # Reasoning is a non-standard field, so it lands in pydantic's extras.
+                    extra = delta.model_extra or {}
+                    for field in REASONING_DELTA_FIELDS:
+                        if isinstance(extra.get(field), str) and extra[field]:
+                            yield ReasoningDelta(extra[field])
+                            break
                     if delta.content:
                         yield TextDelta(delta.content)
                     for tc in delta.tool_calls or []:

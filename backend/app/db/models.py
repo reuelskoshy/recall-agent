@@ -60,6 +60,8 @@ class Message(Base):
     # Assistant tool requests, as [{"id", "name", "arguments"}].
     tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     tool_call_id: Mapped[str | None] = mapped_column(String(100))
+    # A reasoning model's hidden thinking for this assistant message.
+    reasoning: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp()
     )
