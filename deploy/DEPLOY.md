@@ -53,8 +53,17 @@ and the `recall_reader` login role (SELECT on `acme` only).
    `python -c "import secrets; print(secrets.token_urlsafe(24))"`
    (Neon rejects weak passwords for roles created over SQL).
 
-3. Push the code (from the repo root; use a **write** token from
-   https://huggingface.co/settings/tokens as the password):
+3. Deploy the code. Either:
+
+   **a. Through GitHub (recommended: deploys only after CI passes).**
+   Push the repo to GitHub, then in the GitHub repo **Settings → Secrets and
+   variables → Actions** add the secret `HF_TOKEN` (a Hugging Face **write**
+   token from https://huggingface.co/settings/tokens) and the variable
+   `HF_SPACE` (`<your-username>/recall`). Every push to `main` now runs lint,
+   type checks, and tests; if they pass, the `deploy` job mirrors the repo to
+   the Space, which rebuilds.
+
+   **b. Directly** (use the write token as the password):
 
    ```bash
    git remote add space https://huggingface.co/spaces/<your-username>/recall
@@ -62,8 +71,7 @@ and the `recall_reader` login role (SELECT on `acme` only).
    ```
 
    The Space builds the root `Dockerfile` (about 10 minutes the first time) and
-   starts. Logs: the Space's **Logs** tab. Each later `git push space main`
-   redeploys.
+   starts. Logs: the Space's **Logs** tab.
 
 4. Open `https://<your-username>-recall.hf.space` (the direct URL; share this
    one rather than the huggingface.co page, which wraps the app in an iframe).

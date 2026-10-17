@@ -70,3 +70,32 @@ jobs:
         run: npm test
       - name: Type-check and build
         run: npm run build
+
+  # Continuous deployment: after both test jobs pass on main, mirror the repo to
+  # the Hugging Face Space, which rebuilds the root Dockerfile and goes live.
+  # Configure in GitHub: Settings -> Secrets and variables -> Actions
+  #   secret   HF_TOKEN  (a Hugging Face *write* token)
+  #   variable HF_SPACE  (e.g. your-username/recall)
+  # Without them (e.g. on forks) the job is skipped.
+  deploy:
+    needs: [backend, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.HF_SPACE != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: huggingface
+      url: https://huggingface.co/spaces/${{ vars.HF_SPACE }}
+    concurrency:
+      group: deploy-huggingface
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # a shallow clone cannot be pushed to another remote
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then echo "::error::HF_TOKEN secret is not set"; exit 1; fi
+          HF_USER="${HF_SPACE%%/*}"
+          git push --force "https://${HF_USER}:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" HEAD:main
