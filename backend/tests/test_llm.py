@@ -1,8 +1,12 @@
 """Unit tests for the LLM layer: OpenAI normalization, factory, fake provider."""
 
+import json
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx2 as httpx  # the OpenAI SDK is built on the httpx2 fork
+import openai
 import pytest
 from openai.types.chat import ChatCompletionChunk
 
@@ -209,3 +213,58 @@ def test_factory_passes_reasoning_field_and_blank_means_unset() -> None:
     assert isinstance(provider, OpenAIProvider)
     assert provider.reasoning_field == "reasoning"
     assert Settings(llm_reasoning_field="").llm_reasoning_field is None
+
+
+def _sse_body(*chunks: dict[str, Any]) -> bytes:
+    lines = [f"data: {json.dumps(c)}\n\n" for c in chunks]
+    return ("".join(lines) + "data: [DONE]\n\n").encode()
+
+
+def _provider_with_transport(handler: Any, max_retries: int) -> OpenAIProvider:
+    provider = OpenAIProvider(api_key="k", model="m", max_retries=max_retries)
+    # Route the SDK's HTTP traffic to an in-process handler instead of the network.
+    provider._client = provider._client.with_options(
+        http_client=openai.DefaultAsyncHttpxClient(transport=httpx.MockTransport(handler))
+    )
+    return provider
+
+
+async def test_transient_503_is_retried_then_succeeds() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            return httpx.Response(503, json={"error": {"message": "auth service unavailable"}})
+        body = _sse_body(
+            {
+                "id": "c",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "m",
+                "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}],
+            }
+        )
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    events = await collect(_provider_with_transport(handler, max_retries=3))
+
+    assert attempts == 3
+    assert TextDelta("ok") in events
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (503, "temporarily unavailable (HTTP 503)"),
+        (401, "rejected the API key"),
+        (429, "rate-limiting"),
+    ],
+)
+async def test_persistent_failure_becomes_a_readable_llm_error(status: int, expected: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"error": {"message": "nope"}})
+
+    with pytest.raises(LLMError, match=re.escape(expected)):
+        await collect(_provider_with_transport(handler, max_retries=0))

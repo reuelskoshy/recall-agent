@@ -28,6 +28,9 @@ class Settings(BaseSettings):
 
     llm_provider: str = Field(default="openai", description="openai | fake (see llm/factory.py)")
     llm_timeout_s: float = 60.0
+    llm_max_retries: int = Field(
+        default=4, ge=0, description="Retries on 429/5xx/network errors, with exponential backoff."
+    )
     llm_api_key: str = ""
     llm_chat_model: str = "gpt-5.4-mini"
     llm_base_url: str | None = Field(

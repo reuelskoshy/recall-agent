@@ -17,6 +17,7 @@ PROVIDERS: dict[str, ProviderFactory] = {
         base_url=s.llm_base_url,
         timeout_s=s.llm_timeout_s,
         reasoning_field=s.llm_reasoning_field,
+        max_retries=s.llm_max_retries,
     ),
     "fake": lambda _s: FakeProvider(),
 }

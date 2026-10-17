@@ -1,5 +1,6 @@
 """OpenAI Chat Completions provider (also works with OpenAI-compatible servers like Ollama)."""
 
+import logging
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, cast, get_args
@@ -25,6 +26,9 @@ from app.llm.base import (
 
 # Field names OpenAI-compatible servers use for reasoning text in stream deltas.
 REASONING_DELTA_FIELDS = ("reasoning", "reasoning_content")
+
+
+logger = logging.getLogger(__name__)
 
 
 def to_openai_message(message: ChatMessage, reasoning_field: str | None = None) -> dict[str, Any]:
@@ -100,6 +104,27 @@ class ToolCallBuffer:
         return calls
 
 
+def describe_error(exc: openai.OpenAIError) -> str:
+    """A short, user-facing explanation of an upstream failure."""
+    if isinstance(exc, openai.APITimeoutError):
+        return "The model provider took too long to respond. Please try again."
+    if isinstance(exc, openai.APIConnectionError):
+        return "Could not reach the model provider. Check the network and LLM_BASE_URL."
+    if isinstance(exc, openai.APIStatusError):
+        code = exc.status_code
+        if code in (401, 403):
+            return f"The model provider rejected the API key (HTTP {code}). Check LLM_API_KEY."
+        if code == 429:
+            return "The model provider is rate-limiting requests (HTTP 429). Wait and retry."
+        if code >= 500:
+            return (
+                f"The model provider is temporarily unavailable (HTTP {code}). "
+                "Please try again in a moment."
+            )
+        return f"The model provider rejected the request (HTTP {code}): {exc.message}"
+    return f"Model request failed: {exc}"
+
+
 def normalize_finish_reason(reason: str) -> FinishReason:
     """Map OpenAI's finish reasons onto the neutral set."""
     if reason == "function_call":
@@ -121,12 +146,17 @@ class OpenAIProvider(LLMProvider):
         base_url: str | None = None,
         timeout_s: float = 60.0,
         reasoning_field: str | None = None,
+        max_retries: int = 4,
     ) -> None:
         if not api_key:
             raise LLMError("LLM_API_KEY is not set (or use LLM_PROVIDER=fake)")
         self.model = model
         self.reasoning_field = reasoning_field
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_s)
+        # The SDK retries connection errors, 408/409/429 and 5xx with exponential
+        # backoff (0.5s, 1s, 2s, 4s... plus jitter), only before streaming starts.
+        self._client = AsyncOpenAI(
+            api_key=api_key, base_url=base_url, timeout=timeout_s, max_retries=max_retries
+        )
 
     async def stream_chat(
         self,
@@ -172,7 +202,8 @@ class OpenAIProvider(LLMProvider):
                     if choice.finish_reason:
                         finish_reason = normalize_finish_reason(choice.finish_reason)
         except openai.OpenAIError as exc:
-            raise LLMError(f"OpenAI request failed: {exc}") from exc
+            logger.warning("LLM request to %s failed: %r", self.model, exc)
+            raise LLMError(describe_error(exc)) from exc
 
         for call in buffer.drain():
             yield ToolCallEvent(call)
