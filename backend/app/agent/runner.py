@@ -26,6 +26,7 @@ from app.agent.events import (
     ConversationStarted,
     Done,
     Error,
+    MemoriesRecalled,
     Token,
     ToolCallStarted,
     ToolResultEvent,
@@ -48,6 +49,8 @@ from app.llm.base import (
     Usage,
     UsageEvent,
 )
+from app.memory.extraction import schedule_extraction
+from app.memory.long_term import RankWeights, core_memories, recall_memories
 from app.memory.short_term import load_history
 from app.rag.embeddings import EmbeddingProvider
 from app.tools.base import ToolContext, ToolResult
@@ -229,7 +232,42 @@ async def run_turn(
             .order_by(Document.created_at.desc())
         )
     ).all()
-    system_prompt = build_system_prompt(document_names)
+    # Long-term memory: core memories (instructions, important facts) always, plus
+    # the best-ranked others (similarity + recency + importance). Never fatal.
+    memory_lines: list[str] = []
+    try:
+        core = await core_memories(
+            session, settings.memory_core_min_importance, settings.memory_core_limit
+        )
+        recalled = await recall_memories(
+            session,
+            embedder,
+            user_text,
+            RankWeights.from_settings(settings),
+            limit=settings.memory_inject_k,
+            min_similarity=settings.memory_min_similarity,
+            exclude=[m.id for m in core],
+        )
+        used = [
+            {
+                "id": str(m.id),
+                "content": m.content,
+                "kind": m.kind,
+                "importance_level": m.importance,
+                "reason": "core",
+            }
+            for m in core
+        ] + [{**s.to_dict(), "reason": "relevant"} for s in recalled]
+        memory_lines = [m.content for m in core] + [s.memory.content for s in recalled]
+    except Exception:
+        logger.exception("Run %s: memory recall failed", run.id)
+        await session.rollback()
+        used = []
+    if used:
+        run.memories_used = used
+        await session.commit()
+        yield MemoriesRecalled(memories=used)
+    system_prompt = build_system_prompt(document_names, memory_lines)
     messages = [ChatMessage(role="system", content=system_prompt), *history]
     ctx = ToolContext(
         conversation_id=conversation.id,
@@ -288,6 +326,10 @@ async def run_turn(
                 session.add(final)
                 recorder.finish("completed", iteration)
                 await session.commit()
+                if settings.memory_auto_extract:
+                    schedule_extraction(
+                        SessionLocal, provider, embedder, settings, conversation.id, user_text, text
+                    )
                 yield Done(
                     message_id=final.id,
                     run_id=run.id,

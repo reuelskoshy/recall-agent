@@ -99,6 +99,34 @@ class Settings(BaseSettings):
     )
     max_upload_mb: int = 20
 
+    # ---- Long-term memory ----
+    # score = w_sim * similarity + w_rec * recency + w_imp * importance, each term in [0, 1].
+    memory_weight_similarity: float = Field(default=0.7, ge=0)
+    memory_weight_recency: float = Field(default=0.2, ge=0)
+    memory_weight_importance: float = Field(default=0.1, ge=0)
+    memory_half_life_days: float = Field(
+        default=30.0, gt=0, description="Recency halves every N days since last use."
+    )
+    memory_min_similarity: float = Field(
+        default=0.5, description="Memories less similar than this to the query are never used."
+    )
+    memory_dedup_similarity: float = Field(
+        default=0.9, description="A new memory this similar to an existing one updates it instead."
+    )
+    memory_inject_k: int = Field(
+        default=5, ge=0, description="Top-ranked memories added to the system prompt each turn."
+    )
+    memory_core_min_importance: int = Field(
+        default=4,
+        ge=1,
+        le=6,
+        description="Memories this important (and all instructions) are always in the prompt.",
+    )
+    memory_core_limit: int = Field(default=10, ge=0, description="Max always-on memories.")
+    memory_auto_extract: bool = Field(
+        default=True, description="After each turn, ask the LLM to extract memories."
+    )
+
     @property
     def readonly_url(self) -> str:
         """Connection URL for the read-only SQL role."""

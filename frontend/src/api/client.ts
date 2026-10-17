@@ -5,6 +5,10 @@ import type {
   ConversationSummary,
   DocumentInfo,
   HealthResponse,
+  MemoryInfo,
+  MemoryKind,
+  MemorySaved,
+  ScoredMemoryInfo,
 } from "../types/api";
 import { readSSE } from "./sse";
 
@@ -80,5 +84,24 @@ export const api = {
     body.append("file", file);
     return request<DocumentInfo>("/documents", { method: "POST", body });
   },
+  listMemories: () => request<MemoryInfo[]>("/memories"),
+  searchMemories: (q: string) =>
+    request<ScoredMemoryInfo[]>(`/memories?${new URLSearchParams({ q }).toString()}`),
+  createMemory: (body: { content: string; kind: MemoryKind; importance: number }) =>
+    request<MemorySaved>("/memories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateMemory: (
+    id: string,
+    body: Partial<{ content: string; kind: MemoryKind; importance: number }>,
+  ) =>
+    request<MemoryInfo>(`/memories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteMemory: (id: string) => request<undefined>(`/memories/${id}`, { method: "DELETE" }),
   deleteDocument: (id: string) => request<undefined>(`/documents/${id}`, { method: "DELETE" }),
 };

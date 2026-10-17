@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
+from app.api.memories import router as memories_router
 from app.api.runs import router as runs_router
 from app.api.tools import router as tools_router
 from app.core.config import get_settings
@@ -17,6 +18,7 @@ from app.core.logging import configure_logging
 from app.db.models import EMBEDDING_DIM
 from app.db.session import engine
 from app.llm.base import LLMError
+from app.memory.extraction import drain_pending_extractions
 from app.rag.embeddings import check_dimension, get_embedder
 from app.sql.executor import dispose_readonly_engines
 
@@ -31,6 +33,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
     await check_dimension(get_embedder(), settings.embedding_dim)
     yield
+    await drain_pending_extractions()
     await dispose_readonly_engines()
     await engine.dispose()
 
@@ -57,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(tools_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
     app.include_router(documents_router, prefix="/api")
+    app.include_router(memories_router, prefix="/api")
 
     @app.exception_handler(LLMError)
     async def llm_error_handler(_request: Request, exc: LLMError) -> JSONResponse:

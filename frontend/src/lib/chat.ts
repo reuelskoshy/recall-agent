@@ -7,7 +7,7 @@
  * (`messagesFromStored`).
  */
 
-import type { AgentEvent, Citation, StoredMessage, Usage } from "../types/api";
+import type { AgentEvent, Citation, RecalledMemory, StoredMessage, Usage } from "../types/api";
 
 export type MessageStatus = "streaming" | "done" | "stopped" | "error";
 
@@ -32,6 +32,8 @@ export interface UIMessage {
   error?: string;
   usage?: Usage;
   iterations?: number;
+  /** Long-term memories that were in this turn's prompt (live turns only). */
+  memories?: RecalledMemory[];
 }
 
 /** Fold one stream event into the in-flight assistant message. */
@@ -80,6 +82,8 @@ export function applyEvent(message: UIMessage, event: AgentEvent): UIMessage {
       return { ...message, status: "done", usage: event.usage, iterations: event.iterations };
     case "error":
       return { ...message, status: "error", error: event.message };
+    case "memories":
+      return { ...message, memories: event.memories };
     case "conversation":
       return message;
   }

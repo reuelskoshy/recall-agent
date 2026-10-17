@@ -63,6 +63,55 @@ export interface DocumentInfo {
   created_at: string;
 }
 
+// ---- Long-term memory ----------------------------------------------------------
+
+export type MemoryKind = "fact" | "preference" | "goal" | "instruction";
+
+export interface MemoryInfo {
+  id: string;
+  content: string;
+  kind: MemoryKind;
+  /** 1 (minor) to 5 (identity or standing instruction). */
+  importance: number;
+  /** How it was saved: by the agent's tool, by post-turn extraction, or by hand. */
+  source: "tool" | "auto" | "manual";
+  source_conversation_id: string | null;
+  access_count: number;
+  created_at: string;
+  updated_at: string;
+  last_accessed_at: string;
+}
+
+/** Each term of the ranking formula, all in 0-1. */
+export interface ScoreBreakdown {
+  score: number;
+  /** Raw cosine similarity to the query. */
+  similarity: number;
+  /** Similarity rescaled above the relevance floor: the term the score uses. */
+  relevance: number;
+  recency: number;
+  importance: number;
+}
+
+export interface ScoredMemoryInfo extends MemoryInfo {
+  ranking: ScoreBreakdown;
+}
+
+export interface MemorySaved {
+  action: "created" | "updated";
+  previous_content: string | null;
+  memory: MemoryInfo;
+}
+
+/** A memory injected into a turn's prompt. Core memories are always included, unscored. */
+export interface RecalledMemory extends Partial<ScoreBreakdown> {
+  id: string;
+  content: string;
+  kind: MemoryKind;
+  importance_level: number;
+  reason: "core" | "relevant";
+}
+
 /** query_database's `data` (mirrors the tool's output). */
 export interface QueryResultData {
   /** The SQL that actually ran (normalized by the backend's guard). */
@@ -106,6 +155,11 @@ export interface ConversationStartedEvent {
   run_id: string;
 }
 
+export interface MemoriesRecalledEvent {
+  type: "memories";
+  memories: RecalledMemory[];
+}
+
 export interface TokenEvent {
   type: "token";
   text: string;
@@ -147,6 +201,7 @@ export interface ErrorEvent {
 /** Discriminated union: switch on `type` and TypeScript narrows the payload. */
 export type AgentEvent =
   | ConversationStartedEvent
+  | MemoriesRecalledEvent
   | TokenEvent
   | ToolCallEvent
   | ToolResultEvent

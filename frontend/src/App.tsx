@@ -6,8 +6,15 @@ import { Sidebar } from "./components/Sidebar";
 import { useChat } from "./hooks/useChat";
 import { useConversations } from "./hooks/useConversations";
 import { DocumentsPage } from "./pages/DocumentsPage";
+import { MemoryPage } from "./pages/MemoryPage";
 
-type View = "chat" | "documents";
+type View = "chat" | "documents" | "memory";
+
+const VIEW_LABEL: Record<View, string> = {
+  chat: "Chat",
+  documents: "Documents",
+  memory: "Memory",
+};
 
 export default function App() {
   const { conversations, error: listError, refresh, remove } = useConversations();
@@ -53,7 +60,7 @@ export default function App() {
         </button>
         <h1>Recall</h1>
         <nav className="tabs" aria-label="Views">
-          {(["chat", "documents"] as const).map((v) => (
+          {(["chat", "documents", "memory"] as const).map((v) => (
             <button
               key={v}
               type="button"
@@ -63,7 +70,7 @@ export default function App() {
                 setView(v);
               }}
             >
-              {v === "chat" ? "Chat" : "Documents"}
+              {VIEW_LABEL[v]}
             </button>
           ))}
         </nav>
@@ -86,8 +93,10 @@ export default function App() {
             onSend={(text) => void chat.send(text)}
             onStop={chat.stop}
           />
-        ) : (
+        ) : view === "documents" ? (
           <DocumentsPage />
+        ) : (
+          <MemoryPage />
         )}
       </div>
     </div>

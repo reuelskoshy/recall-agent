@@ -8,6 +8,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Computed,
     DateTime,
     ForeignKey,
@@ -94,6 +95,8 @@ class AgentRun(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text)
+    # Long-term memories injected into this run's prompt: [{id, content, score}].
+    memories_used: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -200,3 +203,46 @@ class DocumentChunk(Base):
     )
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+
+
+class Memory(Base):
+    """Long-term memory: one durable fact about the user, shared across conversations.
+
+    Ranked at recall time by similarity, recency of use, and importance
+    (see app/memory/long_term.py).
+    """
+
+    __tablename__ = "memories"
+    __table_args__ = (
+        CheckConstraint("importance BETWEEN 1 AND 5", name="importance"),
+        Index(
+            "ix_memories_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    content: Mapped[str] = mapped_column(Text)
+    # fact | preference | goal | instruction
+    kind: Mapped[str] = mapped_column(String(20))
+    importance: Mapped[int] = mapped_column(Integer, default=3)
+    # tool (agent called save_memory) | auto (extracted after a turn) | manual (UI/API)
+    source: Mapped[str] = mapped_column(String(10))
+    # Deferred: only compared inside SQL, so listing memories never ships vectors.
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), deferred=True)
+    # Memories outlive the conversation they came from.
+    source_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL")
+    )
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    # Recency is measured from the last time the memory was recalled (or saved).
+    last_accessed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

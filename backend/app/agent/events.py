@@ -28,6 +28,14 @@ class ConversationStarted(BaseModel):
     run_id: uuid.UUID
 
 
+class MemoriesRecalled(BaseModel):
+    """Long-term memories added to this turn's system prompt (sent only if any)."""
+
+    type: Literal["memories"] = "memories"
+    memories: list[dict[str, Any]]
+    """Each: id, content, kind, score and its similarity/recency/importance terms."""
+
+
 class Token(BaseModel):
     """A chunk of assistant text."""
 
@@ -75,4 +83,12 @@ class Error(BaseModel):
     run_id: uuid.UUID | None = None
 
 
-AgentEvent = ConversationStarted | Token | ToolCallStarted | ToolResultEvent | Done | Error
+AgentEvent = (
+    ConversationStarted
+    | MemoriesRecalled
+    | Token
+    | ToolCallStarted
+    | ToolResultEvent
+    | Done
+    | Error
+)

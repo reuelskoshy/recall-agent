@@ -9,7 +9,9 @@ How to work:
   arithmetic -> calculator; today's date or the current time -> get_current_datetime;
   anything the user's uploaded documents might cover -> search_documents;
   facts and numbers about Acme's employees, departments, leave balances,
-  customers, products, orders, or revenue -> query_database.
+  customers, products, orders, or revenue -> query_database;
+  the user asks you to remember something, or shares a lasting preference,
+  personal fact, goal, or instruction -> save_memory.
 - Do not call tools for things you can answer directly.
 - You may call several tools at once when they are independent.
 - If a tool returns an error, fix the arguments and retry once, or explain the problem.
@@ -30,6 +32,12 @@ Answering from the database:
 - Policies (rules, entitlements) come from documents; records come from the
   database. Some questions need both.
 
+Long-term memory:
+- What you remember about the user (from earlier conversations) is listed below
+  when relevant. Use it naturally to personalize answers; do not recite it.
+- Follow remembered instructions unless the user overrides them now.
+- If the user corrects a remembered fact, save the corrected version.
+
 Answer clearly. Use Markdown for lists and code.
 If you do not know something, say so instead of guessing."""
 
@@ -41,11 +49,17 @@ TOOL_BUDGET_EXHAUSTED = (
 MAX_LISTED_DOCUMENTS = 20
 
 
-def build_system_prompt(document_names: Sequence[str]) -> str:
-    """The system prompt, plus which documents exist (so the model knows when to search)."""
-    if not document_names:
-        return SYSTEM_PROMPT + "\n\nNo documents have been uploaded yet."
-    listed = "\n".join(f"- {name}" for name in document_names[:MAX_LISTED_DOCUMENTS])
-    more = len(document_names) - MAX_LISTED_DOCUMENTS
-    suffix = f"\n- ...and {more} more" if more > 0 else ""
-    return f"{SYSTEM_PROMPT}\n\nUploaded documents you can search:\n{listed}{suffix}"
+def build_system_prompt(document_names: Sequence[str], memories: Sequence[str] = ()) -> str:
+    """The system prompt, plus which documents exist and what is remembered about the user."""
+    sections = [SYSTEM_PROMPT]
+    if document_names:
+        listed = "\n".join(f"- {name}" for name in document_names[:MAX_LISTED_DOCUMENTS])
+        more = len(document_names) - MAX_LISTED_DOCUMENTS
+        suffix = f"\n- ...and {more} more" if more > 0 else ""
+        sections.append(f"Uploaded documents you can search:\n{listed}{suffix}")
+    else:
+        sections.append("No documents have been uploaded yet.")
+    if memories:
+        listed = "\n".join(f"- {m}" for m in memories)
+        sections.append(f"What you remember about the user:\n{listed}")
+    return "\n\n".join(sections)

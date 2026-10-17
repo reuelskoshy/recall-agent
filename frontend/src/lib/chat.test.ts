@@ -74,6 +74,23 @@ describe("applyEvent", () => {
     expect(statuses).toEqual(["error", "running"]);
   });
 
+  it("attaches the memories that were in the prompt", () => {
+    const memory = {
+      id: "m1",
+      content: "The user is vegetarian.",
+      kind: "preference",
+      importance_level: 4,
+      reason: "core",
+    } as const;
+    const message = fold([
+      { type: "memories", memories: [memory] },
+      { type: "token", text: "Try dal." },
+    ]);
+
+    expect(message.memories).toEqual([memory]);
+    expect(message.parts).toEqual([{ kind: "text", text: "Try dal." }]);
+  });
+
   it("does not mutate the previous message", () => {
     const before = fold([{ type: "token", text: "a" }]);
     const snapshot = structuredClone(before);

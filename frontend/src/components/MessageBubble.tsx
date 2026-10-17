@@ -2,7 +2,31 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { citationLabel, citationsOf, messageText, type UIMessage } from "../lib/chat";
+import type { RecalledMemory } from "../types/api";
 import { ToolTraceCard } from "./ToolTraceCard";
+
+/** Which long-term memories shaped this answer, and why each was included. */
+function MemoriesUsed({ memories }: { memories: RecalledMemory[] }) {
+  return (
+    <details className="memories-used">
+      <summary>
+        Using {memories.length} memor{memories.length === 1 ? "y" : "ies"}
+      </summary>
+      <ul>
+        {memories.map((m) => (
+          <li key={m.id}>
+            {m.content}{" "}
+            <span className="hit-score">
+              {m.reason === "core"
+                ? "· always on"
+                : `· score ${(m.score ?? 0).toFixed(2)} (sim ${(m.similarity ?? 0).toFixed(2)})`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
 
 function Typing() {
   return (
@@ -16,7 +40,7 @@ function Typing() {
 
 /** One chat message. Assistant turns render text and tool-trace parts in order. */
 export function MessageBubble({ message }: { message: UIMessage }) {
-  const { role, parts, status, error, usage, iterations } = message;
+  const { role, parts, status, error, usage, iterations, memories } = message;
 
   if (role === "user") {
     return (
@@ -37,6 +61,7 @@ export function MessageBubble({ message }: { message: UIMessage }) {
 
   return (
     <div className="message message-assistant">
+      {memories && memories.length > 0 && <MemoriesUsed memories={memories} />}
       <div className="message-body">
         {parts.map((part, i) =>
           part.kind === "text" ? (
