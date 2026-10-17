@@ -1,6 +1,8 @@
 import { citationLabel, type ToolTrace } from "../lib/chat";
 import type { Citation, QueryResultData } from "../types/api";
 
+const BACKEND_LABEL: Record<string, string> = { postgres: "PostgreSQL", snowflake: "Snowflake" };
+
 const STATUS_LABEL: Record<ToolTrace["status"], string> = {
   running: "Running",
   ok: "Succeeded",
@@ -46,6 +48,8 @@ function QueryResultView({ result }: { result: QueryResultData }) {
       <div className="tool-section-label">
         {result.row_count}
         {result.truncated ? "+" : ""} rows · {result.elapsed_ms} ms
+        {result.backend && ` · ${BACKEND_LABEL[result.backend] ?? result.backend}`}
+        {result.query_id && ` · query ${result.query_id}`}
       </div>
       {result.rows.length > 0 && (
         <div className="result-table-wrap">

@@ -122,6 +122,10 @@ export interface QueryResultData {
   /** More rows matched than were returned. */
   truncated: boolean;
   elapsed_ms: number;
+  /** Where it ran: "postgres" or "snowflake". */
+  backend?: string;
+  /** The warehouse's own query ID (Snowflake: look it up in Query History). */
+  query_id?: string | null;
 }
 
 /** One entry of search_documents' `data.results` (mirrors the tool's output). */

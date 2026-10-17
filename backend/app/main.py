@@ -35,6 +35,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
     await drain_pending_extractions()
     await dispose_readonly_engines()
+    if settings.sql_backend == "snowflake":
+        from app.sql.snowflake import close_snowflake_backends
+
+        await close_snowflake_backends()
     await engine.dispose()
 
 

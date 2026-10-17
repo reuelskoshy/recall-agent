@@ -36,9 +36,24 @@ _FORBIDDEN_NODES = (
     exp.Into,  # SELECT ... INTO creates a table
     exp.Lock,  # SELECT ... FOR UPDATE takes row locks
 )
-_FORBIDDEN_FUNCTION_PREFIXES = ("pg_", "lo_", "dblink", "txid_")
+_FORBIDDEN_FUNCTION_PREFIXES = (
+    # Postgres: server files, sleep, admin, large objects, remote connections.
+    "pg_",
+    "lo_",
+    "dblink",
+    "txid_",
+    # Snowflake: SYSTEM$WAIT (sleep), SYSTEM$CANCEL_*, and other system functions.
+    "system$",
+    # Snowflake: account metadata and other sessions' history.
+    "query_history",
+    "login_history",
+)
 _FORBIDDEN_FUNCTIONS = frozenset(
     {
+        # Snowflake: re-reading earlier results or object definitions.
+        "result_scan",
+        "last_query_id",
+        "get_ddl",
         "set_config",
         "current_setting",
         "nextval",
@@ -69,8 +84,14 @@ def _function_name(node: exp.Func) -> str:
     return (node.name if isinstance(node, exp.Anonymous) else node.sql_name()).lower()
 
 
-def validate_select(sql: str, schema: str, allowed_tables: Collection[str]) -> ValidatedQuery:
-    """Accept exactly one read-only query over `allowed_tables`, or raise UnsafeQueryError."""
+def validate_select(
+    sql: str, schema: str, allowed_tables: Collection[str], dialect: str = "postgres"
+) -> ValidatedQuery:
+    """Accept exactly one read-only query over `allowed_tables`, or raise UnsafeQueryError.
+
+    `dialect` is a sqlglot dialect ("postgres", "snowflake", ...): the query is
+    parsed and re-rendered in it.
+    """
     sql = sql.strip().rstrip(";").strip()
     if not sql:
         raise UnsafeQueryError("The query is empty.")
@@ -78,7 +99,7 @@ def validate_select(sql: str, schema: str, allowed_tables: Collection[str]) -> V
         raise UnsafeQueryError(f"The query is too long (max {MAX_SQL_CHARS} characters).")
 
     try:
-        statements = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
+        statements = [s for s in sqlglot.parse(sql, read=dialect) if s is not None]
     except ParseError as exc:
         first = str(exc).splitlines()[0]
         raise UnsafeQueryError(f"Could not parse the SQL: {first}") from exc
@@ -105,9 +126,9 @@ def validate_select(sql: str, schema: str, allowed_tables: Collection[str]) -> V
             continue  # a set-returning function such as generate_series(); checked above
         name = table.name.lower()
         qualifier = table.db.lower()
-        if table.catalog or (qualifier and qualifier != schema):
+        if table.catalog or (qualifier and qualifier != schema.lower()):
             raise UnsafeQueryError(
-                f"Table {table.sql(dialect='postgres')} is not available. "
+                f"Table {table.sql(dialect=dialect)} is not available. "
                 f"Only tables in schema {schema!r} can be queried."
             )
         if not qualifier and name in cte_names:
@@ -118,4 +139,21 @@ def validate_select(sql: str, schema: str, allowed_tables: Collection[str]) -> V
             )
         tables.add(name)
 
-    return ValidatedQuery(sql=tree.sql(dialect="postgres"), tables=frozenset(tables))
+    return ValidatedQuery(sql=tree.sql(dialect=dialect), tables=frozenset(tables))
+
+
+def with_row_limit(sql: str, limit: int, dialect: str) -> str:
+    """Make the database itself stop at `limit` rows (keeping a smaller LIMIT if present).
+
+    Warehouses bill for compute, so on top of fetching only `limit` rows the
+    query should not produce more. The extra row the caller asks for tells it
+    the result was truncated.
+    """
+    tree = sqlglot.parse_one(sql, read=dialect)
+    current = tree.args.get("limit")
+    expression = current.expression if isinstance(current, exp.Limit) else None
+    if isinstance(expression, exp.Literal) and expression.is_int and int(expression.this) <= limit:
+        return sql
+    if not isinstance(tree, exp.Query):
+        return sql
+    return tree.limit(limit).sql(dialect=dialect)

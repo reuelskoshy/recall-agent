@@ -39,6 +39,23 @@ class Settings(BaseSettings):
         description="Explicit URL for the SQL tool. Default: DATABASE_URL with the "
         "read-only user and password swapped in.",
     )
+    sql_backend: Literal["postgres", "snowflake"] = Field(
+        default="postgres",
+        description="Where query_database runs: the local Postgres dataset, or a Snowflake "
+        "warehouse loaded with the same dataset (see app/datasets/snowflake_setup.py).",
+    )
+    snowflake_account: str = Field(default="", description="Account identifier, ORG-ACCOUNT.")
+    snowflake_user: str = "RECALL_AGENT"
+    snowflake_private_key_path: str = Field(
+        default="secrets/snowflake_rsa_key.p8",
+        description="PKCS#8 private key for key-pair auth (relative paths are also tried "
+        "from the repository root).",
+    )
+    snowflake_private_key_passphrase: str | None = None
+    snowflake_role: str = "RECALL_READER"
+    snowflake_warehouse: str = "RECALL_WH"
+    snowflake_database: str = "RECALL"
+    snowflake_schema: str = "ACME"
     sql_max_rows: int = Field(default=50, ge=1, le=500, description="Rows returned per query.")
     sql_statement_timeout_ms: int = Field(
         default=5000, ge=100, description="Postgres statement_timeout for the SQL tool."
@@ -138,7 +155,13 @@ class Settings(BaseSettings):
             .render_as_string(hide_password=False)
         )
 
-    @field_validator("llm_base_url", "llm_reasoning_field", "database_readonly_url", mode="before")
+    @field_validator(
+        "llm_base_url",
+        "llm_reasoning_field",
+        "database_readonly_url",
+        "snowflake_private_key_passphrase",
+        mode="before",
+    )
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
         """Treat blank values in .env (e.g. `LLM_BASE_URL=`) as unset."""

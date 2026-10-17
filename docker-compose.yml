@@ -35,6 +35,8 @@ services:
       - ./backend/alembic:/app/alembic
       - ./backend/tests:/app/tests
       - hf_cache:/hf-cache
+      # Snowflake key pair (git-ignored); read-only inside the container.
+      - ./secrets:/app/secrets:ro
     command: sh -c "alembic upgrade head && python -m app.datasets.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   frontend:

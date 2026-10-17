@@ -26,3 +26,7 @@ backend/data/uploads/
 .claude/
 .remember/
 .DS_Store
+
+# Local credentials (Snowflake key pair, generated setup SQL)
+secrets/
+*.p8

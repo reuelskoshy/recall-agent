@@ -14,6 +14,7 @@ dependencies = [
     "pypdf>=6.21.1",
     "python-multipart>=0.0.32",
     "sentence-transformers>=6.1.0",
+    "snowflake-connector-python>=5.0.0",
     "sqlalchemy[asyncio]>=2.1.5",
     "sqlglot>=30.23.0",
     "torch>=2.14.1",

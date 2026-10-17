@@ -35,6 +35,8 @@ class QueryResult:
     truncated: bool
     """True if more than `max_rows` rows matched (only `max_rows` are returned)."""
     elapsed_ms: int
+    query_id: str | None = None
+    """The database's own ID for the query, when it has one (Snowflake Query History)."""
 
 
 def get_readonly_engine(url: str, statement_timeout_ms: int, search_path: str) -> AsyncEngine:
