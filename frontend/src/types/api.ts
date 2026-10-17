@@ -4,6 +4,12 @@
  */
 
 /** GET /api/health — mirrors app.api.health.HealthResponse */
+/** GET /api/auth/status: whether this deployment needs the demo password. */
+export interface AuthStatus {
+  required: boolean;
+  authenticated: boolean;
+}
+
 export interface HealthResponse {
   status: "ok" | "degraded";
   database: "ok" | "unreachable";

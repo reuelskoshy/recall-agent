@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.agent.events import AgentEvent
 from app.agent.runner import AgentConfig, run_turn
 from app.core.config import Settings, get_settings
+from app.core.security import limit_chat
 from app.db.models import Conversation
 from app.db.session import get_session
 from app.llm.base import LLMProvider
@@ -90,7 +91,11 @@ async def get_conversation_for_chat(body: ChatRequest, session: SessionDep) -> C
 @router.post(
     "/chat",
     response_class=EventSourceResponse,
-    responses={404: {"description": "Conversation not found"}},
+    responses={
+        404: {"description": "Conversation not found"},
+        429: {"description": "Rate limited"},
+    },
+    dependencies=[Depends(limit_chat)],
 )
 async def chat(
     body: ChatRequest,

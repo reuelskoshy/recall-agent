@@ -4,6 +4,7 @@ import type {
   ConversationDetail,
   ConversationSummary,
   DocumentInfo,
+  AuthStatus,
   HealthResponse,
   MemoryInfo,
   MemoryKind,
@@ -11,6 +12,42 @@ import type {
   ScoredMemoryInfo,
 } from "../types/api";
 import { readSSE } from "./sse";
+
+// ---- Demo access token ---------------------------------------------------------
+// A public deployment may require a shared password; the token it buys is kept
+// in localStorage (wrapped in try/catch: storage can be unavailable) and sent as
+// a bearer header, which works inside iframes where cookies may be blocked.
+
+const TOKEN_KEY = "recall.demoToken";
+
+export function getToken(): string | null {
+  try {
+    return window.localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token: string | null): void {
+  try {
+    if (token) window.localStorage.setItem(TOKEN_KEY, token);
+    else window.localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Not persisted; the user will be asked again next visit.
+  }
+}
+
+/** Called on any 401, so the app can show the password screen. */
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
+function withAuth(headers: Headers): Headers {
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return headers;
+}
 
 /** Error carrying the HTTP status, so callers can tell 4xx from 5xx from network failures. */
 export class ApiError extends Error {
@@ -36,9 +73,10 @@ async function toApiError(response: Response, path: string): Promise<ApiError> {
 }
 
 async function request<T>(path: string, init?: RequestInit, okStatuses: number[] = []): Promise<T> {
-  const headers = new Headers(init?.headers);
+  const headers = withAuth(new Headers(init?.headers));
   headers.set("Accept", "application/json");
   const response = await fetch(`/api${path}`, { ...init, headers });
+  if (response.status === 401) onUnauthorized?.();
   if (!response.ok && !okStatuses.includes(response.status)) {
     throw await toApiError(response, path);
   }
@@ -53,10 +91,13 @@ async function request<T>(path: string, init?: RequestInit, okStatuses: number[]
 async function* streamChat(body: ChatRequest, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
   const response = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers: withAuth(
+      new Headers({ "Content-Type": "application/json", Accept: "text/event-stream" }),
+    ),
     body: JSON.stringify(body),
     signal,
   });
+  if (response.status === 401) onUnauthorized?.();
   if (!response.ok) throw await toApiError(response, "/chat");
 
   for await (const message of readSSE(response)) {
@@ -70,6 +111,13 @@ async function* streamChat(body: ChatRequest, signal?: AbortSignal): AsyncGenera
 
 /** Typed wrappers for every backend endpoint live here. */
 export const api = {
+  authStatus: () => request<AuthStatus>("/auth/status"),
+  login: (password: string) =>
+    request<{ token: string }>("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    }),
   // /health returns a body on 503 too (status "degraded"), so it is not treated as an error.
   health: () => request<HealthResponse>("/health", undefined, [503]),
   listConversations: () => request<ConversationSummary[]>("/conversations"),

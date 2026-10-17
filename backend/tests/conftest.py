@@ -39,6 +39,7 @@ from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 from app.core.config import Settings  # noqa: E402
+from app.core.security import chat_limiter  # noqa: E402
 from app.datasets.seed import seed  # noqa: E402
 from app.db.session import engine  # noqa: E402
 from app.main import create_app  # noqa: E402
@@ -50,6 +51,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 @pytest.fixture
 def app() -> FastAPI:
     """A fresh app per test, so dependency overrides never leak between tests."""
+    chat_limiter.reset()  # rate-limit state is process-wide; start each test clean
     app = create_app()
     app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
     return app

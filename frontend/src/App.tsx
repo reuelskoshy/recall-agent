@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 
+import { AccessGate } from "./components/AccessGate";
 import { ChatView } from "./components/ChatView";
 import { HealthBadge } from "./components/HealthBadge";
 import { Sidebar } from "./components/Sidebar";
@@ -16,7 +17,8 @@ const VIEW_LABEL: Record<View, string> = {
   memory: "Memory",
 };
 
-export default function App() {
+/** The app itself: header, conversations, and the three views. */
+function Workspace() {
   const { conversations, error: listError, refresh, remove } = useConversations();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<View>("chat");
@@ -100,5 +102,13 @@ export default function App() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AccessGate>
+      <Workspace />
+    </AccessGate>
   );
 }

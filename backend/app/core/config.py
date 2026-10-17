@@ -27,6 +27,29 @@ class Settings(BaseSettings):
     )
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # ---- Public demo deployment ----
+    demo_password: str | None = Field(
+        default=None,
+        description="If set, every API call except /health and /auth needs a token "
+        "obtained with this password (POST /api/auth/login).",
+    )
+    rate_limit_chat_per_ip: int = Field(
+        default=20, ge=0, description="Chat turns per client IP per window (0 = unlimited)."
+    )
+    rate_limit_window_s: int = Field(default=600, ge=1)
+    trusted_proxy_hops: int = Field(
+        default=0,
+        ge=0,
+        description="Reverse proxies in front of the app (1 on HF Spaces/Railway). Their "
+        "X-Forwarded-For entries identify the client; 0 = use the socket address.",
+    )
+    daily_chat_limit: int = Field(
+        default=0, ge=0, description="Chat turns per UTC day across everyone (0 = unlimited)."
+    )
+    static_dir: str | None = Field(
+        default=None, description="Serve the built frontend from here (production image)."
+    )
+
     # ---- query_database (read-only SQL) ----
     readonly_db_user: str = Field(
         default="recall_reader",
@@ -160,12 +183,33 @@ class Settings(BaseSettings):
         "llm_reasoning_field",
         "database_readonly_url",
         "snowflake_private_key_passphrase",
+        "demo_password",
+        "static_dir",
         mode="before",
     )
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
         """Treat blank values in .env (e.g. `LLM_BASE_URL=`) as unset."""
         return None if value == "" else value
+
+    @field_validator("database_url", "database_readonly_url", mode="after")
+    @classmethod
+    def _asyncpg_url(cls, value: str | None) -> str | None:
+        """Accept provider URLs as pasted (Neon, Supabase, Heroku style) and adapt them.
+
+        `postgres://` / `postgresql://` get the asyncpg driver; libpq's `sslmode`
+        becomes asyncpg's `ssl`; `channel_binding` (unsupported) is dropped.
+        """
+        if value is None:
+            return None
+        url = make_url(value)
+        if url.drivername in ("postgres", "postgresql"):
+            url = url.set(drivername="postgresql+asyncpg")
+        query = dict(url.query)
+        if "sslmode" in query:
+            query["ssl"] = query.pop("sslmode")
+        query.pop("channel_binding", None)
+        return url.set(query=query).render_as_string(hide_password=False)
 
 
 @lru_cache

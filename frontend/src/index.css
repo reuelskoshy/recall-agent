@@ -925,3 +925,32 @@ button {
 .score-bar-value {
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- Demo password gate ---------------------------------------------------- */
+
+.gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--bg);
+}
+
+.gate-card {
+  width: 100%;
+  max-width: 380px;
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.gate-card h1 {
+  margin: 0;
+}
+
+.gate-card .memory-search {
+  margin: 0;
+}

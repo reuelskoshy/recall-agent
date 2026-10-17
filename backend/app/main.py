@@ -2,11 +2,14 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
+from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
@@ -15,6 +18,7 @@ from app.api.runs import router as runs_router
 from app.api.tools import router as tools_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.security import require_access
 from app.db.models import EMBEDDING_DIM
 from app.db.session import engine
 from app.llm.base import LLMError
@@ -59,12 +63,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Open: health checks (used by the platform) and the login itself.
     app.include_router(health_router, prefix="/api")
-    app.include_router(chat_router, prefix="/api")
-    app.include_router(tools_router, prefix="/api")
-    app.include_router(runs_router, prefix="/api")
-    app.include_router(documents_router, prefix="/api")
-    app.include_router(memories_router, prefix="/api")
+    app.include_router(auth_router, prefix="/api")
+    # Everything else needs the demo token when DEMO_PASSWORD is set.
+    protected = [Depends(require_access)]
+    for router in (chat_router, tools_router, runs_router, documents_router, memories_router):
+        app.include_router(router, prefix="/api", dependencies=protected)
 
     @app.exception_handler(LLMError)
     async def llm_error_handler(_request: Request, exc: LLMError) -> JSONResponse:
@@ -72,6 +77,11 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)}
         )
+
+    # Production image: the built frontend is served by the API itself (one origin,
+    # one container). Mounted last so /api routes take precedence.
+    if settings.static_dir and Path(settings.static_dir).is_dir():
+        app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="frontend")
 
     return app
 
