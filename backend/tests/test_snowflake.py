@@ -266,7 +266,7 @@ async def test_expired_session_reconnects_once(fake: FakeSnowflake, key_path: Pa
 
 def test_missing_configuration_is_reported_clearly(tmp_path: Path) -> None:
     with pytest.raises(ToolError, match="SNOWFLAKE_ACCOUNT"):
-        sf.SnowflakeBackend.from_settings(Settings(sql_backend="snowflake"))
+        sf.SnowflakeBackend.from_settings(Settings(sql_backend="snowflake", snowflake_account=""))
     with pytest.raises(ToolError, match="private key not found"):
         sf.SnowflakeBackend.from_settings(
             Settings(snowflake_account="a-b", snowflake_private_key_path=str(tmp_path / "x.p8"))
