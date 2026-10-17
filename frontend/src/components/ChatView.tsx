@@ -13,9 +13,9 @@ interface ChatViewProps {
 }
 
 const SUGGESTIONS = [
+  "How many vacation days do I get, and how many carry over?",
   "What is 18.5% of 2,340,000, divided by 12?",
   "What time is it in Tokyo and in New York right now?",
-  "How many days until 1 January 2027?",
 ];
 
 /** Message list (auto-scrolling) plus the composer. */

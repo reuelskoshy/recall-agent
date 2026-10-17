@@ -56,6 +56,31 @@ class Settings(BaseSettings):
         default=4000, description="Tool output longer than this is truncated before the LLM."
     )
 
+    # ---- Embeddings & RAG ----
+    embedding_provider: str = Field(
+        default="sentence_transformers", description="sentence_transformers | fake"
+    )
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_dim: int = Field(
+        default=384, description="Must match the vector(N) column; changing it needs a migration."
+    )
+    embedding_query_prefix: str = Field(
+        default="Represent this sentence for searching relevant passages: ",
+        description="BGE's retrieval instruction, prepended to queries (not documents).",
+    )
+    rag_chunk_size: int = Field(default=1000, description="Max characters per chunk.")
+    rag_chunk_overlap: int = Field(default=150, description="Characters shared by neighbours.")
+    rag_top_k: int = Field(default=5, description="Passages returned by search_documents.")
+    rag_min_similarity: float = Field(
+        default=0.5,
+        description="Cosine similarity below which a passage counts as irrelevant "
+        "(calibrated for bge-small-en-v1.5: on-topic ~0.55-0.8, off-topic <0.48).",
+    )
+    rag_candidates: int = Field(
+        default=20, description="Candidates fetched from each of vector and keyword search."
+    )
+    max_upload_mb: int = 20
+
     @field_validator("llm_base_url", "llm_reasoning_field", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:

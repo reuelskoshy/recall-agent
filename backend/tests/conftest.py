@@ -23,6 +23,8 @@ os.environ["DATABASE_URL"] = _dev_url.set(database=TEST_DB_NAME).render_as_strin
     hide_password=False
 )
 os.environ["ENVIRONMENT"] = "test"
+# Never download/load the real embedding model in tests.
+os.environ["EMBEDDING_PROVIDER"] = "fake"
 get_settings.cache_clear()
 
 import asyncpg  # noqa: E402
@@ -34,6 +36,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.db.session import engine  # noqa: E402
 from app.main import create_app  # noqa: E402
+from app.rag.embeddings import FakeEmbedder, get_embedder  # noqa: E402
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -41,7 +44,9 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 @pytest.fixture
 def app() -> FastAPI:
     """A fresh app per test, so dependency overrides never leak between tests."""
-    return create_app()
+    app = create_app()
+    app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
+    return app
 
 
 @pytest.fixture
@@ -91,7 +96,7 @@ async def db(test_db: None) -> AsyncIterator[None]:
     """Use the test database and wipe its data afterwards."""
     yield
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE conversations CASCADE"))
+        await conn.execute(text("TRUNCATE conversations, documents CASCADE"))
 
 
 def parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:

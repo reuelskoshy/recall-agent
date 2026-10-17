@@ -68,7 +68,6 @@ button {
 .app-header h1 {
   margin: 0;
   font-size: 1.2rem;
-  flex: 1;
 }
 
 .app-body {
@@ -503,6 +502,200 @@ button {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ---- Citations ------------------------------------------------------------- */
+
+.citation {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--user-bubble);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sources-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.hits {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.hit-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.hit-score {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.hit-snippet {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Tabs & pages ---------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.tab {
+  background: none;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.tab:hover {
+  background: var(--surface-2);
+}
+
+.tab.active {
+  color: var(--text);
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.page {
+  overflow-y: auto;
+  padding: 24px max(16px, calc((100% - 760px) / 2));
+  min-width: 0;
+}
+
+.page h2 {
+  margin-top: 0;
+}
+
+.page-intro,
+.page-empty {
+  color: var(--muted);
+}
+
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 32px 16px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 16px 0;
+}
+
+.dropzone:hover,
+.dropzone:focus-visible,
+.dropzone.dragging {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.dropzone-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  padding: 6px 0;
+  color: var(--muted);
+}
+
+.upload-error {
+  color: var(--bad);
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  margin-left: auto;
+}
+
+.doc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.doc-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.doc-error {
+  font-size: 0.8rem;
+  color: var(--bad);
+}
+
+.doc-row .doc-delete {
+  visibility: visible;
+}
+
+.badge .spinner {
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
 }
 
 /* ---- Composer -------------------------------------------------------------- */

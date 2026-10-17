@@ -3,6 +3,7 @@ import type {
   ChatRequest,
   ConversationDetail,
   ConversationSummary,
+  DocumentInfo,
   HealthResponse,
 } from "../types/api";
 import { readSSE } from "./sse";
@@ -72,4 +73,12 @@ export const api = {
   deleteConversation: (id: string) =>
     request<undefined>(`/conversations/${id}`, { method: "DELETE" }),
   streamChat,
+  listDocuments: () => request<DocumentInfo[]>("/documents"),
+  /** multipart upload; the browser sets the Content-Type boundary itself. */
+  uploadDocument: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<DocumentInfo>("/documents", { method: "POST", body });
+  },
+  deleteDocument: (id: string) => request<undefined>(`/documents/${id}`, { method: "DELETE" }),
 };

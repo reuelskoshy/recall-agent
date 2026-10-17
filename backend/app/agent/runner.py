@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.events import (
@@ -31,9 +31,9 @@ from app.agent.events import (
     ToolResultEvent,
     UsageOut,
 )
-from app.agent.prompts import SYSTEM_PROMPT, TOOL_BUDGET_EXHAUSTED
+from app.agent.prompts import TOOL_BUDGET_EXHAUSTED, build_system_prompt
 from app.core.config import Settings
-from app.db.models import AgentRun, AgentStep, Conversation, Message
+from app.db.models import AgentRun, AgentStep, Conversation, Document, Message
 from app.db.session import SessionLocal
 from app.llm.base import (
     ChatMessage,
@@ -49,6 +49,7 @@ from app.llm.base import (
     UsageEvent,
 )
 from app.memory.short_term import load_history
+from app.rag.embeddings import EmbeddingProvider
 from app.tools.base import ToolContext, ToolResult
 from app.tools.registry import ToolRegistry
 
@@ -193,6 +194,8 @@ async def run_turn(
     conversation: Conversation | None,
     user_text: str,
     config: AgentConfig,
+    embedder: EmbeddingProvider,
+    settings: Settings,
 ) -> AsyncIterator[AgentEvent]:
     """Run one agent turn and yield events. Creates the conversation when it is None.
 
@@ -219,8 +222,21 @@ async def run_turn(
     )
 
     history = await load_history(session, conversation.id, config.history_limit)
-    messages = [ChatMessage(role="system", content=SYSTEM_PROMPT), *history]
-    ctx = ToolContext(conversation_id=conversation.id, session_factory=SessionLocal)
+    document_names = (
+        await session.scalars(
+            select(Document.filename)
+            .where(Document.status == "ready")
+            .order_by(Document.created_at.desc())
+        )
+    ).all()
+    system_prompt = build_system_prompt(document_names)
+    messages = [ChatMessage(role="system", content=system_prompt), *history]
+    ctx = ToolContext(
+        conversation_id=conversation.id,
+        session_factory=SessionLocal,
+        embedder=embedder,
+        settings=settings,
+    )
     recorder = _RunRecorder(session, run)
     iteration = 0
 
@@ -319,6 +335,7 @@ async def run_turn(
                         role="tool",
                         content=result.content,
                         tool_call_id=call.id,
+                        tool_data=result.data,
                     )
                 )
                 yield ToolResultEvent(

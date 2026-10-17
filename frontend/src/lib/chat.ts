@@ -7,7 +7,7 @@
  * (`messagesFromStored`).
  */
 
-import type { AgentEvent, StoredMessage, Usage } from "../types/api";
+import type { AgentEvent, Citation, StoredMessage, Usage } from "../types/api";
 
 export type MessageStatus = "streaming" | "done" | "stopped" | "error";
 
@@ -18,6 +18,8 @@ export interface ToolTrace {
   status: "running" | "ok" | "error";
   result?: string;
   latencyMs?: number;
+  /** Structured tool output for the UI (e.g. search citations). */
+  data?: Record<string, unknown> | null;
 }
 
 export type MessagePart = { kind: "text"; text: string } | { kind: "tool"; tool: ToolTrace };
@@ -68,6 +70,7 @@ export function applyEvent(message: UIMessage, event: AgentEvent): UIMessage {
                   status: event.is_error ? "error" : "ok",
                   result: event.content,
                   latencyMs: event.latency_ms,
+                  data: event.data,
                 },
               }
             : part,
@@ -147,8 +150,33 @@ export function messagesFromStored(stored: StoredMessage[]): UIMessage[] {
         // Error results are prefixed by the backend registry.
         part.tool.status = row.content.startsWith("Error:") ? "error" : "ok";
         part.tool.result = row.content;
+        part.tool.data = row.tool_data;
       }
     }
   }
   return out;
+}
+
+/** search_documents citations in a message, de-duplicated by label, in first-seen order. */
+export function citationsOf(message: UIMessage): Citation[] {
+  const seen = new Set<string>();
+  const out: Citation[] = [];
+  for (const part of message.parts) {
+    if (part.kind !== "tool" || part.tool.name !== "search_documents") continue;
+    const results = part.tool.data?.results;
+    if (!Array.isArray(results)) continue;
+    for (const result of results as Citation[]) {
+      const key = result.citation;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(result);
+      }
+    }
+  }
+  return out;
+}
+
+/** Label used in chips; the backend formats it (page, section, or filename). */
+export function citationLabel(c: Pick<Citation, "citation">): string {
+  return c.citation;
 }

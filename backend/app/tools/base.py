@@ -14,7 +14,9 @@ from typing import Any, ClassVar, Generic, TypeVar
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import Settings
 from app.llm.base import ToolSpec
+from app.rag.embeddings import EmbeddingProvider
 
 InputT = TypeVar("InputT", bound=BaseModel)
 
@@ -45,10 +47,14 @@ class ToolContext:
 
     Tools get a session *factory*, not a session: tools in one turn run
     concurrently, and an AsyncSession must not be shared between tasks.
+    Shared services (embedder, settings) are injected here rather than imported
+    as globals, so tests and other deployments can swap them.
     """
 
     conversation_id: uuid.UUID
     session_factory: async_sessionmaker[AsyncSession]
+    embedder: EmbeddingProvider
+    settings: Settings
 
 
 class Tool(ABC, Generic[InputT]):

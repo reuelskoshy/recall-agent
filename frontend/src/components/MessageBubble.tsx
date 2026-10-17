@@ -1,7 +1,7 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { messageText, type UIMessage } from "../lib/chat";
+import { citationLabel, citationsOf, messageText, type UIMessage } from "../lib/chat";
 import { ToolTraceCard } from "./ToolTraceCard";
 
 function Typing() {
@@ -33,6 +33,7 @@ export function MessageBubble({ message }: { message: UIMessage }) {
   const waiting =
     status === "streaming" && (!last || (last.kind === "tool" && last.tool.status !== "running"));
   const toolCount = parts.filter((p) => p.kind === "tool").length;
+  const sources = status === "streaming" ? [] : citationsOf(message);
 
   return (
     <div className="message message-assistant">
@@ -49,6 +50,16 @@ export function MessageBubble({ message }: { message: UIMessage }) {
         {waiting && <Typing />}
         {status === "streaming" && last?.kind === "text" && <span className="cursor" aria-hidden />}
       </div>
+      {sources.length > 0 && (
+        <div className="sources" aria-label="Sources">
+          <span className="sources-label">Sources</span>
+          {sources.map((c) => (
+            <span key={c.citation} className="citation" title={c.snippet}>
+              {citationLabel(c)}
+            </span>
+          ))}
+        </div>
+      )}
       {status === "error" && <div className="message-error">⚠ {error}</div>}
       {status === "stopped" && <div className="message-meta">Stopped</div>}
       {status === "done" && usage && (

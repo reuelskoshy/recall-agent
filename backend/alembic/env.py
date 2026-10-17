@@ -2,8 +2,10 @@
 
 import asyncio
 from logging.config import fileConfig
+from typing import Any, Literal
 
 from alembic import context
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -33,9 +35,18 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def render_item(type_: str, obj: Any, autogen_context: Any) -> str | Literal[False]:
+    """Render pgvector columns as `Vector(N)` (imported by script.py.mako)."""
+    if type_ == "type" and isinstance(obj, Vector):
+        return f"Vector({obj.dim})"
+    return False
+
+
 def do_run_migrations(connection: Connection) -> None:
     """Run migrations on a sync connection handed over from the async engine."""
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, render_item=render_item
+    )
     with context.begin_transaction():
         context.run_migrations()
 

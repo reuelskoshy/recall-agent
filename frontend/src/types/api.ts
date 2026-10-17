@@ -36,12 +36,46 @@ export interface StoredMessage {
   content: string;
   tool_calls: StoredToolCall[] | null;
   tool_call_id: string | null;
+  tool_data: Record<string, unknown> | null;
   created_at: string;
 }
 
 /** mirrors app.api.chat.ConversationDetail */
 export interface ConversationDetail extends ConversationSummary {
   messages: StoredMessage[];
+}
+
+// ---- Documents (RAG) — mirror app.api.documents ------------------------------
+
+export type DocumentStatus = "processing" | "ready" | "failed";
+
+/** mirrors app.api.documents.DocumentOut */
+export interface DocumentInfo {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  status: DocumentStatus;
+  error: string | null;
+  page_count: number | null;
+  chunk_count: number;
+  embedding_model: string;
+  created_at: string;
+}
+
+/** One entry of search_documents' `data.results` (mirrors the tool's output). */
+export interface Citation {
+  n: number;
+  document_id: string;
+  filename: string;
+  page: number | null;
+  /** Innermost heading, for documents without pages. */
+  section: string | null;
+  /** Ready-made label from the backend, e.g. "a.pdf p.3" or "notes.md § Setup". */
+  citation: string;
+  chunk_index: number;
+  similarity: number;
+  snippet: string;
 }
 
 // ---- Streaming events (SSE) — mirror app.agent.events ------------------------

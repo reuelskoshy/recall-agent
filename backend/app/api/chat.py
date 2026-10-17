@@ -19,6 +19,7 @@ from app.db.models import Conversation
 from app.db.session import get_session
 from app.llm.base import LLMProvider
 from app.llm.factory import get_llm_provider
+from app.rag.embeddings import EmbeddingProvider, get_embedder
 from app.tools.registry import ToolRegistry, get_tool_registry
 
 router = APIRouter(tags=["chat"])
@@ -56,6 +57,7 @@ class MessageOut(BaseModel):
     content: str
     tool_calls: list[dict[str, Any]] | None
     tool_call_id: str | None
+    tool_data: dict[str, Any] | None
     created_at: datetime
 
 
@@ -96,6 +98,7 @@ async def chat(
     conversation: Annotated[Conversation | None, Depends(get_conversation_for_chat)],
     provider: Annotated[LLMProvider, Depends(get_llm_provider)],
     registry: Annotated[ToolRegistry, Depends(get_tool_registry)],
+    embedder: Annotated[EmbeddingProvider, Depends(get_embedder)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AsyncIterator[ServerSentEvent]:
     """Run one agent turn, streaming events as SSE.
@@ -111,6 +114,8 @@ async def chat(
         conversation,
         body.message,
         AgentConfig.from_settings(settings),
+        embedder,
+        settings,
     )
     async for event in events:
         yield ServerSentEvent(event=event.type, data=event)

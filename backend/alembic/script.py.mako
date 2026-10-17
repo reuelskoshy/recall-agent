@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from pgvector.sqlalchemy import Vector  # noqa: F401  (autogenerate may reference it)
 ${imports if imports else ""}
 
 revision: str = ${repr(up_revision)}

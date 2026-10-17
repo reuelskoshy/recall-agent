@@ -21,6 +21,8 @@ services:
     environment:
       # Inside the compose network the DB host is the service name "db".
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-recall}:${POSTGRES_PASSWORD:-recall}@db:5432/${POSTGRES_DB:-recall}
+      # Hugging Face model cache on a named volume: the embedding model downloads once.
+      HF_HOME: /hf-cache
     ports:
       - "8000:8000"
     depends_on:
@@ -32,6 +34,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
       - ./backend/tests:/app/tests
+      - hf_cache:/hf-cache
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   frontend:
@@ -47,3 +50,4 @@ services:
 
 volumes:
   pgdata:
+  hf_cache:

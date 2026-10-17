@@ -10,11 +10,17 @@ from pydantic import BaseModel, Field
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.llm.base import ToolCall
+from app.rag.embeddings import FakeEmbedder
 from app.tools.base import Tool, ToolContext, ToolError, ToolResult, json_schema_for
 from app.tools.datetime_tool import CurrentDatetimeTool
 from app.tools.registry import ToolRegistry, build_registry
 
-CTX = ToolContext(conversation_id=uuid.uuid4(), session_factory=SessionLocal)
+CTX = ToolContext(
+    conversation_id=uuid.uuid4(),
+    session_factory=SessionLocal,
+    embedder=FakeEmbedder(),
+    settings=Settings(),
+)
 
 
 class EchoInput(BaseModel):
@@ -82,7 +88,7 @@ def test_register_rejects_duplicates_and_invalid_names() -> None:
 def test_build_registry_discovers_tools_in_the_package() -> None:
     registry = build_registry(Settings())
 
-    assert {"calculator", "get_current_datetime"} <= set(registry.names)
+    assert {"calculator", "get_current_datetime", "search_documents"} <= set(registry.names)
     assert all(spec.parameters["type"] == "object" for spec in registry.specs())
 
 

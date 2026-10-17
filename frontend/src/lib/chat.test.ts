@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentEvent, StoredMessage } from "../types/api";
-import { applyEvent, messagesFromStored, type UIMessage } from "./chat";
+import { applyEvent, citationLabel, citationsOf, messagesFromStored, type UIMessage } from "./chat";
 
 const empty: UIMessage = { id: "a", role: "assistant", parts: [], status: "streaming" };
 
@@ -46,6 +46,7 @@ describe("applyEvent", () => {
           status: "ok",
           result: "6*7 = 42",
           latencyMs: 3,
+          data: null,
         },
       },
       { kind: "text", text: "It's 42." },
@@ -88,6 +89,7 @@ describe("messagesFromStored", () => {
     content: "",
     tool_calls: null,
     tool_call_id: null,
+    tool_data: null,
     created_at: "",
     ...partial,
   });
@@ -117,5 +119,39 @@ describe("messagesFromStored", () => {
       "error",
       "42, and use ** for powers.",
     ]);
+  });
+});
+
+describe("citationsOf", () => {
+  const hit = (filename: string, page: number | null, n: number, section: string | null = null) => ({
+    n,
+    document_id: "d",
+    filename,
+    page,
+    section,
+    citation: page ? `${filename} p.${String(page)}` : section ? `${filename} § ${section}` : filename,
+    chunk_index: n,
+    similarity: 0.8,
+    snippet: "",
+  });
+
+  it("collects search citations across tool calls, de-duplicated by file and page", () => {
+    const message = fold([
+      { type: "tool_call", id: "s1", name: "search_documents", arguments: {} },
+      {
+        type: "tool_result",
+        id: "s1",
+        name: "search_documents",
+        content: "",
+        is_error: false,
+        latency_ms: 5,
+        data: {
+          results: [hit("a.pdf", 2, 1), hit("a.pdf", 2, 2), hit("b.md", null, 3, "Setup")],
+        },
+      },
+      { type: "tool_call", id: "c1", name: "calculator", arguments: {} },
+    ]);
+
+    expect(citationsOf(message).map(citationLabel)).toEqual(["a.pdf p.2", "b.md § Setup"]);
   });
 });

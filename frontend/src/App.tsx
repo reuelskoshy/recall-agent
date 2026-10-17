@@ -5,10 +5,14 @@ import { HealthBadge } from "./components/HealthBadge";
 import { Sidebar } from "./components/Sidebar";
 import { useChat } from "./hooks/useChat";
 import { useConversations } from "./hooks/useConversations";
+import { DocumentsPage } from "./pages/DocumentsPage";
+
+type View = "chat" | "documents";
 
 export default function App() {
   const { conversations, error: listError, refresh, remove } = useConversations();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [view, setView] = useState<View>("chat");
 
   // A turn updates the conversation's title/recency, so re-sort the sidebar.
   const onConversationActivity = useCallback(() => {
@@ -18,11 +22,13 @@ export default function App() {
 
   const select = (id: string) => {
     setSidebarOpen(false);
+    setView("chat");
     if (id !== chat.conversationId) void chat.load(id);
   };
 
   const startNew = () => {
     setSidebarOpen(false);
+    setView("chat");
     chat.reset();
   };
 
@@ -46,6 +52,21 @@ export default function App() {
           ☰
         </button>
         <h1>Recall</h1>
+        <nav className="tabs" aria-label="Views">
+          {(["chat", "documents"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              className={`tab ${view === v ? "active" : ""}`}
+              aria-current={view === v ? "page" : undefined}
+              onClick={() => {
+                setView(v);
+              }}
+            >
+              {v === "chat" ? "Chat" : "Documents"}
+            </button>
+          ))}
+        </nav>
         <HealthBadge />
       </header>
       <div className={`app-body ${sidebarOpen ? "sidebar-open" : ""}`}>
@@ -57,13 +78,17 @@ export default function App() {
           onNew={startNew}
           onDelete={(id) => void deleteConversation(id)}
         />
-        <ChatView
-          messages={chat.messages}
-          isStreaming={chat.isStreaming}
-          loadError={chat.loadError}
-          onSend={(text) => void chat.send(text)}
-          onStop={chat.stop}
-        />
+        {view === "chat" ? (
+          <ChatView
+            messages={chat.messages}
+            isStreaming={chat.isStreaming}
+            loadError={chat.loadError}
+            onSend={(text) => void chat.send(text)}
+            onStop={chat.stop}
+          />
+        ) : (
+          <DocumentsPage />
+        )}
       </div>
     </div>
   );
