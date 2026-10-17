@@ -1,5 +1,5 @@
 import { citationLabel, type ToolTrace } from "../lib/chat";
-import type { Citation } from "../types/api";
+import type { Citation, QueryResultData } from "../types/api";
 
 const STATUS_LABEL: Record<ToolTrace["status"], string> = {
   running: "Running",
@@ -22,9 +22,66 @@ function searchResults(tool: ToolTrace): Citation[] | null {
     : null;
 }
 
+function queryResult(tool: ToolTrace): QueryResultData | null {
+  const data = tool.data;
+  return tool.name === "query_database" && data && Array.isArray(data.rows)
+    ? (data as unknown as QueryResultData)
+    : null;
+}
+
+function formatCell(value: unknown): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "string") return value;
+  return typeof value === "number" || typeof value === "boolean"
+    ? String(value)
+    : JSON.stringify(value);
+}
+
+/** The SQL that ran and its rows as a scrollable table. */
+function QueryResultView({ result }: { result: QueryResultData }) {
+  return (
+    <>
+      <div className="tool-section-label">SQL</div>
+      <pre className="sql">{result.sql}</pre>
+      <div className="tool-section-label">
+        {result.row_count}
+        {result.truncated ? "+" : ""} rows · {result.elapsed_ms} ms
+      </div>
+      {result.rows.length > 0 && (
+        <div className="result-table-wrap">
+          <table className="result-table">
+            <thead>
+              <tr>
+                {result.columns.map((c, i) => (
+                  <th key={i}>{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {result.rows.map((row, r) => (
+                <tr key={r}>
+                  {row.map((cell, c) => (
+                    <td key={c} className={typeof cell === "number" ? "num" : undefined}>
+                      {formatCell(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {result.truncated && (
+        <div className="hit-score">Capped at {result.row_count} rows; more matched.</div>
+      )}
+    </>
+  );
+}
+
 /** Collapsible card showing one tool call: arguments in, result out, latency. */
 export function ToolTraceCard({ tool }: { tool: ToolTrace }) {
   const results = searchResults(tool);
+  const query = queryResult(tool);
 
   return (
     <details className={`tool-card tool-${tool.status}`}>
@@ -35,11 +92,23 @@ export function ToolTraceCard({ tool }: { tool: ToolTrace }) {
         <code className="tool-name">{tool.name}</code>
         <span className="tool-args">{previewArguments(tool.arguments)}</span>
         {results && <span className="tool-latency">{results.length} hits</span>}
+        {query && (
+          <span className="tool-latency">
+            {query.row_count}
+            {query.truncated ? "+" : ""} rows
+          </span>
+        )}
         {tool.latencyMs !== undefined && <span className="tool-latency">{tool.latencyMs} ms</span>}
       </summary>
       <div className="tool-body">
-        <div className="tool-section-label">Arguments</div>
-        <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
+        {query ? (
+          <QueryResultView result={query} />
+        ) : (
+          <>
+            <div className="tool-section-label">Arguments</div>
+            <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
+          </>
+        )}
         {results && results.length > 0 && (
           <>
             <div className="tool-section-label">Retrieved passages</div>

@@ -34,6 +34,8 @@ from fastapi import FastAPI  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
+from app.core.config import Settings  # noqa: E402
+from app.datasets.seed import seed  # noqa: E402
 from app.db.session import engine  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.rag.embeddings import FakeEmbedder, get_embedder  # noqa: E402
@@ -89,6 +91,8 @@ async def test_db() -> None:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     await asyncio.to_thread(command.upgrade, config, "head")
+    # Read-only SQL role + sample dataset (skipped when already at this version).
+    await seed(engine, Settings())
 
 
 @pytest.fixture

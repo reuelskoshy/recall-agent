@@ -763,3 +763,42 @@ button {
     visibility: visible;
   }
 }
+
+/* ---- SQL results ---------------------------------------------------------- */
+
+.tool-body pre.sql {
+  white-space: pre-wrap;
+}
+
+.result-table-wrap {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.result-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.8rem;
+}
+
+.result-table th,
+.result-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.result-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.result-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

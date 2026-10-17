@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class Settings(BaseSettings):
@@ -25,6 +26,23 @@ class Settings(BaseSettings):
         description="SQLAlchemy async URL (asyncpg driver).",
     )
     cors_origins: list[str] = ["http://localhost:5173"]
+
+    # ---- query_database (read-only SQL) ----
+    readonly_db_user: str = Field(
+        default="recall_reader",
+        pattern=r"^[a-z_][a-z0-9_]{0,62}$",
+        description="Login role the SQL tool connects as; it may only SELECT the dataset.",
+    )
+    readonly_db_password: str = "recall_reader"
+    database_readonly_url: str | None = Field(
+        default=None,
+        description="Explicit URL for the SQL tool. Default: DATABASE_URL with the "
+        "read-only user and password swapped in.",
+    )
+    sql_max_rows: int = Field(default=50, ge=1, le=500, description="Rows returned per query.")
+    sql_statement_timeout_ms: int = Field(
+        default=5000, ge=100, description="Postgres statement_timeout for the SQL tool."
+    )
 
     llm_provider: str = Field(default="openai", description="openai | fake (see llm/factory.py)")
     llm_timeout_s: float = 60.0
@@ -81,7 +99,18 @@ class Settings(BaseSettings):
     )
     max_upload_mb: int = 20
 
-    @field_validator("llm_base_url", "llm_reasoning_field", mode="before")
+    @property
+    def readonly_url(self) -> str:
+        """Connection URL for the read-only SQL role."""
+        if self.database_readonly_url:
+            return self.database_readonly_url
+        return (
+            make_url(self.database_url)
+            .set(username=self.readonly_db_user, password=self.readonly_db_password)
+            .render_as_string(hide_password=False)
+        )
+
+    @field_validator("llm_base_url", "llm_reasoning_field", "database_readonly_url", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
         """Treat blank values in .env (e.g. `LLM_BASE_URL=`) as unset."""

@@ -63,6 +63,18 @@ export interface DocumentInfo {
   created_at: string;
 }
 
+/** query_database's `data` (mirrors the tool's output). */
+export interface QueryResultData {
+  /** The SQL that actually ran (normalized by the backend's guard). */
+  sql: string;
+  columns: string[];
+  rows: unknown[][];
+  row_count: number;
+  /** More rows matched than were returned. */
+  truncated: boolean;
+  elapsed_ms: number;
+}
+
 /** One entry of search_documents' `data.results` (mirrors the tool's output). */
 export interface Citation {
   n: number;

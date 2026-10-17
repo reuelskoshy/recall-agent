@@ -14,7 +14,8 @@ interface ChatViewProps {
 
 const SUGGESTIONS = [
   "How many vacation days do I get, and how many carry over?",
-  "What is 18.5% of 2,340,000, divided by 12?",
+  "Which 3 customers brought in the most revenue in 2026?",
+  "Who has unused leave above the carry-over limit this year?",
   "What time is it in Tokyo and in New York right now?",
 ];
 

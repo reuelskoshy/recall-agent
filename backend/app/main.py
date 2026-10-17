@@ -18,6 +18,7 @@ from app.db.models import EMBEDDING_DIM
 from app.db.session import engine
 from app.llm.base import LLMError
 from app.rag.embeddings import check_dimension, get_embedder
+from app.sql.executor import dispose_readonly_engines
 
 
 @asynccontextmanager
@@ -30,6 +31,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
     await check_dimension(get_embedder(), settings.embedding_dim)
     yield
+    await dispose_readonly_engines()
     await engine.dispose()
 
 
