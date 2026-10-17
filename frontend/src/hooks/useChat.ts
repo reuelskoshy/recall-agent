@@ -1,19 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, api } from "../api/client";
-import type { Usage } from "../types/api";
+import { api } from "../api/client";
+import { applyEvent, messagesFromStored, type UIMessage } from "../lib/chat";
 
-export type MessageStatus = "streaming" | "done" | "stopped" | "error";
-
-/** A message as the chat UI shows it (stored messages and in-flight ones alike). */
-export interface UIMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  status: MessageStatus;
-  error?: string;
-  usage?: Usage | null;
-}
+export type { UIMessage } from "../lib/chat";
 
 interface UseChatOptions {
   /** Called when the server confirms a turn's conversation (new or existing). */
@@ -21,9 +11,7 @@ interface UseChatOptions {
 }
 
 function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Chat state for one conversation: messages, streaming, stop, load, and reset. */
@@ -37,8 +25,8 @@ export function useChat({ onConversationActivity }: UseChatOptions = {}) {
   // Abort any in-flight stream when the component using this hook unmounts.
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const updateMessage = useCallback((id: string, patch: (m: UIMessage) => Partial<UIMessage>) => {
-    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch(m) } : m)));
+  const updateMessage = useCallback((id: string, update: (m: UIMessage) => UIMessage) => {
+    setMessages((prev) => prev.map((m) => (m.id === id ? update(m) : m)));
   }, []);
 
   const send = useCallback(
@@ -50,12 +38,16 @@ export function useChat({ onConversationActivity }: UseChatOptions = {}) {
       abortRef.current = controller;
       setIsStreaming(true);
 
-      const userId = crypto.randomUUID();
       const assistantId = crypto.randomUUID();
       setMessages((prev) => [
         ...prev,
-        { id: userId, role: "user", content: trimmed, status: "done" },
-        { id: assistantId, role: "assistant", content: "", status: "streaming" },
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [{ kind: "text", text: trimmed }],
+          status: "done",
+        },
+        { id: assistantId, role: "assistant", parts: [], status: "streaming" },
       ]);
 
       try {
@@ -64,28 +56,17 @@ export function useChat({ onConversationActivity }: UseChatOptions = {}) {
           controller.signal,
         );
         for await (const event of events) {
-          switch (event.type) {
-            case "conversation":
-              setConversationId(event.conversation_id);
-              onConversationActivity?.(event.conversation_id);
-              break;
-            case "token":
-              updateMessage(assistantId, (m) => ({ content: m.content + event.text }));
-              break;
-            case "done":
-              updateMessage(assistantId, () => ({ status: "done", usage: event.usage }));
-              break;
-            case "error":
-              updateMessage(assistantId, () => ({ status: "error", error: event.message }));
-              break;
+          if (event.type === "conversation") {
+            setConversationId(event.conversation_id);
+            onConversationActivity?.(event.conversation_id);
           }
+          updateMessage(assistantId, (m) => applyEvent(m, event));
         }
       } catch (err) {
-        if (controller.signal.aborted) {
-          updateMessage(assistantId, () => ({ status: "stopped" }));
-        } else {
-          updateMessage(assistantId, () => ({ status: "error", error: errorMessage(err) }));
-        }
+        const stopped = controller.signal.aborted;
+        updateMessage(assistantId, (m) =>
+          stopped ? { ...m, status: "stopped" } : { ...m, status: "error", error: errorMessage(err) },
+        );
       } finally {
         abortRef.current = null;
         setIsStreaming(false);
@@ -111,16 +92,7 @@ export function useChat({ onConversationActivity }: UseChatOptions = {}) {
       setConversationId(id);
       try {
         const detail = await api.getConversation(id);
-        setMessages(
-          detail.messages
-            .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
-            .map((m) => ({
-              id: m.id,
-              role: m.role as "user" | "assistant",
-              content: m.content,
-              status: "done",
-            })),
-        );
+        setMessages(messagesFromStored(detail.messages));
       } catch (err) {
         setLoadError(errorMessage(err));
       }

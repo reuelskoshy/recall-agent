@@ -5,7 +5,7 @@ They are transport-agnostic: the API sends each one as a Server-Sent Event whose
 """
 
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -20,11 +20,12 @@ class UsageOut(BaseModel):
 
 
 class ConversationStarted(BaseModel):
-    """First event of every turn: which conversation it belongs to."""
+    """First event of every turn: which conversation and run it belongs to."""
 
     type: Literal["conversation"] = "conversation"
     conversation_id: uuid.UUID
     title: str
+    run_id: uuid.UUID
 
 
 class Token(BaseModel):
@@ -34,13 +35,36 @@ class Token(BaseModel):
     text: str
 
 
+class ToolCallStarted(BaseModel):
+    """The model asked for a tool; it is now running."""
+
+    type: Literal["tool_call"] = "tool_call"
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+class ToolResultEvent(BaseModel):
+    """A tool finished (successfully or not). `content` is exactly what the model sees."""
+
+    type: Literal["tool_result"] = "tool_result"
+    id: str
+    name: str
+    content: str
+    is_error: bool
+    latency_ms: int
+    data: dict[str, Any] | None = None
+
+
 class Done(BaseModel):
-    """The turn finished and the assistant message was saved."""
+    """The turn finished and the final assistant message was saved."""
 
     type: Literal["done"] = "done"
     message_id: uuid.UUID
+    run_id: uuid.UUID
     finish_reason: FinishReason
-    usage: UsageOut | None
+    iterations: int
+    usage: UsageOut
 
 
 class Error(BaseModel):
@@ -48,6 +72,7 @@ class Error(BaseModel):
 
     type: Literal["error"] = "error"
     message: str
+    run_id: uuid.UUID | None = None
 
 
-AgentEvent = ConversationStarted | Token | Done | Error
+AgentEvent = ConversationStarted | Token | ToolCallStarted | ToolResultEvent | Done | Error

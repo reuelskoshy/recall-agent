@@ -13,19 +13,20 @@ interface ChatViewProps {
 }
 
 const SUGGESTIONS = [
-  "Explain retrieval-augmented generation in two sentences.",
-  "What makes a good tool description for an LLM agent?",
-  "Write a SQL query that finds the top 5 customers by revenue.",
+  "What is 18.5% of 2,340,000, divided by 12?",
+  "What time is it in Tokyo and in New York right now?",
+  "How many days until 1 January 2027?",
 ];
 
 /** Message list (auto-scrolling) plus the composer. */
 export function ChatView({ messages, isStreaming, loadError, onSend, onStop }: ChatViewProps) {
   const endRef = useRef<HTMLDivElement>(null);
-  const lastContent = messages.at(-1)?.content;
+  // Re-scroll whenever the last message grows (new text or a new tool card).
+  const lastMessage = messages.at(-1);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, lastContent]);
+  }, [messages.length, lastMessage]);
 
   return (
     <section className="chat">

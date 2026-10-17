@@ -378,8 +378,130 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .cursor,
-  .typing span {
+  .typing span,
+  .spinner {
     animation: none;
+  }
+}
+
+/* ---- Tool trace cards ------------------------------------------------------ */
+
+.tool-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+  margin: 8px 0;
+  font-size: 0.875rem;
+}
+
+.tool-card.tool-ok {
+  border-left-color: var(--ok);
+}
+
+.tool-card.tool-error {
+  border-left-color: var(--bad);
+}
+
+.tool-card.tool-running {
+  border-left-color: var(--accent);
+}
+
+.tool-card summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+
+.tool-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-card summary::after {
+  content: "▸";
+  color: var(--muted);
+  padding-left: 4px;
+}
+
+.tool-card[open] summary::after {
+  content: "▾";
+}
+
+.tool-status {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.tool-ok .tool-status {
+  color: var(--ok);
+}
+
+.tool-error .tool-status {
+  color: var(--bad);
+}
+
+.tool-name {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.tool-args {
+  flex: 1;
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tool-latency {
+  color: var(--muted);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.tool-body {
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.tool-section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 10px 0 4px;
+}
+
+.tool-body pre {
+  margin: 0;
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

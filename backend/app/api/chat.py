@@ -13,12 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent.events import AgentEvent
-from app.agent.runner import run_turn
+from app.agent.runner import AgentConfig, run_turn
 from app.core.config import Settings, get_settings
 from app.db.models import Conversation
 from app.db.session import get_session
 from app.llm.base import LLMProvider
 from app.llm.factory import get_llm_provider
+from app.tools.registry import ToolRegistry, get_tool_registry
 
 router = APIRouter(tags=["chat"])
 
@@ -94,15 +95,22 @@ async def chat(
     session: SessionDep,
     conversation: Annotated[Conversation | None, Depends(get_conversation_for_chat)],
     provider: Annotated[LLMProvider, Depends(get_llm_provider)],
+    registry: Annotated[ToolRegistry, Depends(get_tool_registry)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AsyncIterator[ServerSentEvent]:
-    """Run one chat turn, streaming events as SSE.
+    """Run one agent turn, streaming events as SSE.
 
-    Event names: `conversation`, `token`, `done`, `error`. Each event's data is
-    the JSON of the matching model in `app.agent.events`.
+    Event names: `conversation`, `token`, `tool_call`, `tool_result`, `done`,
+    `error`. Each event's data is the JSON of the matching model in
+    `app.agent.events`.
     """
     events: AsyncIterator[AgentEvent] = run_turn(
-        session, provider, conversation, body.message, settings.chat_history_limit
+        session,
+        provider,
+        registry,
+        conversation,
+        body.message,
+        AgentConfig.from_settings(settings),
     )
     async for event in events:
         yield ServerSentEvent(event=event.type, data=event)

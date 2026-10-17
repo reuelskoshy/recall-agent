@@ -1,5 +1,6 @@
 """OpenAI Chat Completions provider (also works with OpenAI-compatible servers like Ollama)."""
 
+import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, cast, get_args
 
@@ -28,6 +29,8 @@ def to_openai_message(message: ChatMessage) -> dict[str, Any]:
         return {"role": "tool", "tool_call_id": message.tool_call_id, "content": message.content}
     out: dict[str, Any] = {"role": message.role, "content": message.content}
     if message.tool_calls:
+        # Some OpenAI-compatible servers reject "" here; null is the canonical value.
+        out["content"] = message.content or None
         out["tool_calls"] = [
             {
                 "id": call.id,
@@ -73,8 +76,13 @@ class ToolCallBuffer:
 
     def drain(self) -> list[ToolCall]:
         """Return the completed calls in index order and reset the buffer."""
+        # A missing id would make it impossible to pair results with calls.
         calls = [
-            ToolCall(id=p["id"], name=p["name"], arguments=p["arguments"] or "{}")
+            ToolCall(
+                id=p["id"] or f"call_{uuid.uuid4().hex[:12]}",
+                name=p["name"],
+                arguments=p["arguments"] or "{}",
+            )
             for _, p in sorted(self._parts.items())
         ]
         self._parts.clear()

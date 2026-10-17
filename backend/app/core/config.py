@@ -38,6 +38,15 @@ class Settings(BaseSettings):
         default=20, description="Max past messages sent to the model (token-aware in Phase 5)."
     )
 
+    agent_max_iterations: int = Field(
+        default=6, ge=1, description="Max LLM calls per turn; the last one gets no tools."
+    )
+    agent_turn_timeout_s: float = Field(default=120.0, description="Wall-clock budget per turn.")
+    tool_timeout_s: float = Field(default=15.0, description="Default per-tool-call timeout.")
+    tool_max_result_chars: int = Field(
+        default=4000, description="Tool output longer than this is truncated before the LLM."
+    )
+
     @field_validator("llm_base_url", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:

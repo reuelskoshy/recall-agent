@@ -57,6 +57,7 @@ export interface ConversationStartedEvent {
   type: "conversation";
   conversation_id: string;
   title: string;
+  run_id: string;
 }
 
 export interface TokenEvent {
@@ -64,17 +65,44 @@ export interface TokenEvent {
   text: string;
 }
 
+export interface ToolCallEvent {
+  type: "tool_call";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolResultEvent {
+  type: "tool_result";
+  id: string;
+  name: string;
+  /** Exactly what the model saw. */
+  content: string;
+  is_error: boolean;
+  latency_ms: number;
+  data: Record<string, unknown> | null;
+}
+
 export interface DoneEvent {
   type: "done";
   message_id: string;
+  run_id: string;
   finish_reason: FinishReason;
-  usage: Usage | null;
+  iterations: number;
+  usage: Usage;
 }
 
 export interface ErrorEvent {
   type: "error";
   message: string;
+  run_id: string | null;
 }
 
 /** Discriminated union: switch on `type` and TypeScript narrows the payload. */
-export type AgentEvent = ConversationStartedEvent | TokenEvent | DoneEvent | ErrorEvent;
+export type AgentEvent =
+  | ConversationStartedEvent
+  | TokenEvent
+  | ToolCallEvent
+  | ToolResultEvent
+  | DoneEvent
+  | ErrorEvent;
