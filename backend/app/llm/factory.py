@@ -12,9 +12,9 @@ ProviderFactory = Callable[[Settings], LLMProvider]
 
 PROVIDERS: dict[str, ProviderFactory] = {
     "openai": lambda s: OpenAIProvider(
-        api_key=s.openai_api_key,
-        model=s.openai_chat_model,
-        base_url=s.openai_base_url,
+        api_key=s.llm_api_key,
+        model=s.llm_chat_model,
+        base_url=s.llm_base_url,
         timeout_s=s.llm_timeout_s,
     ),
     "fake": lambda _s: FakeProvider(),

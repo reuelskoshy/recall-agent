@@ -103,7 +103,7 @@ class OpenAIProvider(LLMProvider):
         timeout_s: float = 60.0,
     ) -> None:
         if not api_key:
-            raise LLMError("OPENAI_API_KEY is not set (or use LLM_PROVIDER=fake)")
+            raise LLMError("LLM_API_KEY is not set (or use LLM_PROVIDER=fake)")
         self.model = model
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_s)
 

@@ -105,14 +105,14 @@ async def test_llm_failure_emits_error_and_keeps_only_user_message(
 
 async def test_missing_provider_config_returns_503(app: FastAPI, client: AsyncClient) -> None:
     def broken_provider() -> LLMProvider:
-        raise LLMError("OPENAI_API_KEY is not set")
+        raise LLMError("LLM_API_KEY is not set")
 
     app.dependency_overrides[get_llm_provider] = broken_provider
 
     response = await client.post("/api/chat", json={"message": "hi"})
 
     assert response.status_code == 503
-    assert "OPENAI_API_KEY" in response.json()["detail"]
+    assert "LLM_API_KEY" in response.json()["detail"]
 
 
 async def test_empty_message_is_rejected(app: FastAPI, client: AsyncClient) -> None:

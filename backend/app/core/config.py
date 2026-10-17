@@ -28,9 +28,9 @@ class Settings(BaseSettings):
 
     llm_provider: str = Field(default="openai", description="openai | fake (see llm/factory.py)")
     llm_timeout_s: float = 60.0
-    openai_api_key: str = ""
-    openai_chat_model: str = "gpt-5.4-mini"
-    openai_base_url: str | None = Field(
+    llm_api_key: str = ""
+    llm_chat_model: str = "gpt-5.4-mini"
+    llm_base_url: str | None = Field(
         default=None, description="Point at any OpenAI-compatible server, e.g. Ollama's /v1."
     )
 
@@ -38,10 +38,10 @@ class Settings(BaseSettings):
         default=20, description="Max past messages sent to the model (token-aware in Phase 5)."
     )
 
-    @field_validator("openai_base_url", mode="before")
+    @field_validator("llm_base_url", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
-        """Treat `OPENAI_BASE_URL=` (blank in .env) as unset."""
+        """Treat `LLM_BASE_URL=` (blank in .env) as unset."""
         return None if value == "" else value
 
 

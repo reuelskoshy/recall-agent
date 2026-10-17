@@ -156,8 +156,8 @@ def test_factory_builds_named_provider_and_rejects_unknown() -> None:
 
 
 def test_openai_provider_requires_api_key() -> None:
-    with pytest.raises(LLMError, match="OPENAI_API_KEY"):
-        build_provider(Settings(llm_provider="openai", openai_api_key=""))
+    with pytest.raises(LLMError, match="LLM_API_KEY"):
+        build_provider(Settings(llm_provider="openai", llm_api_key=""))
 
 
 async def test_fake_provider_echoes_when_script_is_exhausted() -> None:
@@ -169,4 +169,4 @@ async def test_fake_provider_echoes_when_script_is_exhausted() -> None:
 
 
 def test_blank_base_url_is_treated_as_unset() -> None:
-    assert Settings(openai_base_url="").openai_base_url is None
+    assert Settings(llm_base_url="").llm_base_url is None
