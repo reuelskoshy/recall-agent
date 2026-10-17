@@ -289,3 +289,21 @@ async def test_query_database_tool_runs_on_snowflake(fake: FakeSnowflake, key_pa
     assert result.data["query_id"] == "01b2-fake-query-id"
     assert result.data["rows"] == [[9]]
     assert fake.executed == ["SELECT COUNT(*) AS n FROM employees WHERE is_remote LIMIT 51"]
+
+
+def test_private_key_is_passed_in_memory_not_as_a_file(fake: FakeSnowflake, key_path: Path) -> None:
+    # Avoids the connector's file-permission check, which always fails on
+    # Windows bind mounts inside Linux containers.
+    backend = sf.SnowflakeBackend.from_settings(settings_for(key_path))
+
+    options = backend._connect_kwargs
+    assert "private_key_file" not in options
+    assert isinstance(options["private_key"], bytes)
+
+
+def test_unreadable_private_key_is_reported(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.p8"
+    bad.write_text("not a key")
+
+    with pytest.raises(ToolError, match="Could not load the Snowflake private key"):
+        sf.SnowflakeBackend.from_settings(settings_for(bad))

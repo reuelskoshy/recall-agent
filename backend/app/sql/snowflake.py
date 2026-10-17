@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
 from snowflake.connector import aio
 from snowflake.connector.errors import DatabaseError, Error, ProgrammingError
 
@@ -48,6 +49,27 @@ def resolve_key_path(path: str) -> Path:
     if candidate.is_absolute() or candidate.exists():
         return candidate
     return REPO_ROOT / path
+
+
+def load_private_key(path: Path, passphrase: str | None) -> bytes:
+    """Read a PEM private key and return it as unencrypted PKCS#8 DER, for the connector.
+
+    The key is passed in memory rather than as a file path because the
+    connector refuses key files that are group/world-writable, and files
+    bind-mounted from Windows into a Linux container always look that way
+    (and cannot be chmod-ed there). Raises ToolError for unreadable keys.
+    """
+    try:
+        key = serialization.load_pem_private_key(
+            path.read_bytes(), password=passphrase.encode() if passphrase else None
+        )
+    except (ValueError, TypeError) as exc:
+        raise ToolError(f"Could not load the Snowflake private key: {exc}") from exc
+    return key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
 
 
 def column_name(name: str) -> str:
@@ -90,7 +112,7 @@ class SnowflakeBackend(SqlBackend):
             "account": settings.snowflake_account,
             "user": settings.snowflake_user,
             "authenticator": "SNOWFLAKE_JWT",
-            "private_key_file": str(key),
+            "private_key": load_private_key(key, settings.snowflake_private_key_passphrase),
             "role": settings.snowflake_role,
             "warehouse": settings.snowflake_warehouse,
             "database": settings.snowflake_database,
@@ -106,8 +128,6 @@ class SnowflakeBackend(SqlBackend):
                 "TIMEZONE": "UTC",
             },
         }
-        if settings.snowflake_private_key_passphrase:
-            kwargs["private_key_password"] = settings.snowflake_private_key_passphrase
         return cls(kwargs, schema=settings.snowflake_schema, timeout_s=timeout_s)
 
     async def _connection(self) -> aio.SnowflakeConnection:

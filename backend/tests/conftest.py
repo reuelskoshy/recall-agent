@@ -25,6 +25,8 @@ os.environ["DATABASE_URL"] = _dev_url.set(database=TEST_DB_NAME).render_as_strin
 os.environ["ENVIRONMENT"] = "test"
 # Never download/load the real embedding model in tests.
 os.environ["EMBEDDING_PROVIDER"] = "fake"
+# SQL tests use the local Postgres dataset, whatever .env selects (never a real warehouse).
+os.environ["SQL_BACKEND"] = "postgres"
 # Opt in per test: background extraction would consume scripted fake-LLM turns.
 os.environ["MEMORY_AUTO_EXTRACT"] = "false"
 get_settings.cache_clear()

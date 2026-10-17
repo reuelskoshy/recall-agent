@@ -50,6 +50,9 @@ Save only durable, user-specific information:
 
 Do NOT save:
 - the question itself, one-off tasks, or small talk
+- guesses about the user inferred from a request: asking to delete data does not
+  mean "the user expects write access"; asking about Snowflake does not mean
+  "the user works with Snowflake". Save only what the user says about themselves.
 - general knowledge, document content, or data returned by tools
 - anything about the assistant
 - passwords, API keys, card numbers, or other secrets
