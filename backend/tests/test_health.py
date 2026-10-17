@@ -31,7 +31,7 @@ async def test_health_returns_503_when_database_unreachable(
     assert response.json() == {"status": "degraded", "database": "unreachable", "pgvector": None}
 
 
-@pytest.mark.usefixtures("require_db")
+@pytest.mark.usefixtures("db")
 async def test_health_ok_with_pgvector(client: AsyncClient) -> None:
     response = await client.get("/api/health")
 

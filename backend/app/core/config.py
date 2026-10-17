@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,8 +26,23 @@ class Settings(BaseSettings):
     )
     cors_origins: list[str] = ["http://localhost:5173"]
 
-    llm_provider: str = "openai"
+    llm_provider: str = Field(default="openai", description="openai | fake (see llm/factory.py)")
+    llm_timeout_s: float = 60.0
     openai_api_key: str = ""
+    openai_chat_model: str = "gpt-5.4-mini"
+    openai_base_url: str | None = Field(
+        default=None, description="Point at any OpenAI-compatible server, e.g. Ollama's /v1."
+    )
+
+    chat_history_limit: int = Field(
+        default=20, description="Max past messages sent to the model (token-aware in Phase 5)."
+    )
+
+    @field_validator("openai_base_url", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        """Treat `OPENAI_BASE_URL=` (blank in .env) as unset."""
+        return None if value == "" else value
 
 
 @lru_cache

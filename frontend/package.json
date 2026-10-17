@@ -8,11 +8,14 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -26,6 +29,7 @@
     "globals": "^17.13.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "^4.1.12"
   }
 }
