@@ -1,4 +1,4 @@
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { citationLabel, citationsOf, messageText, type UIMessage } from "../lib/chat";
@@ -6,6 +6,15 @@ import type { RecalledMemory } from "../types/api";
 import { ToolTraceCard } from "./ToolTraceCard";
 
 /** Which long-term memories shaped this answer, and why each was included. */
+/** Links in answers (e.g. web citations) open in a new tab and pass no referrer. */
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer nofollow">
+      {children}
+    </a>
+  ),
+};
+
 function MemoriesUsed({ memories }: { memories: RecalledMemory[] }) {
   return (
     <details className="memories-used">
@@ -65,7 +74,7 @@ export function MessageBubble({ message }: { message: UIMessage }) {
       <div className="message-body">
         {parts.map((part, i) =>
           part.kind === "text" ? (
-            <Markdown key={i} remarkPlugins={[remarkGfm]}>
+            <Markdown key={i} remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
               {part.text}
             </Markdown>
           ) : (

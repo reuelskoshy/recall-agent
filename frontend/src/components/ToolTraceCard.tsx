@@ -1,5 +1,5 @@
 import { citationLabel, type ToolTrace } from "../lib/chat";
-import type { Citation, QueryResultData } from "../types/api";
+import type { Citation, FetchedPageData, QueryResultData, WebSearchHit } from "../types/api";
 
 const BACKEND_LABEL: Record<string, string> = { postgres: "PostgreSQL", snowflake: "Snowflake" };
 
@@ -29,6 +29,42 @@ function queryResult(tool: ToolTrace): QueryResultData | null {
   return tool.name === "query_database" && data && Array.isArray(data.rows)
     ? (data as unknown as QueryResultData)
     : null;
+}
+
+function webResults(tool: ToolTrace): WebSearchHit[] | null {
+  const results = tool.data?.results;
+  return tool.name === "web_search" && Array.isArray(results) ? (results as WebSearchHit[]) : null;
+}
+
+function fetchedPage(tool: ToolTrace): FetchedPageData | null {
+  const data = tool.data;
+  return tool.name === "fetch_url" && data && typeof data.final_url === "string"
+    ? (data as unknown as FetchedPageData)
+    : null;
+}
+
+/** URLs come from the web, so only http(s) ones become links (never `javascript:`). */
+function safeHref(url: string): string | undefined {
+  return /^https?:\/\//i.test(url) ? url : undefined;
+}
+
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+function ExternalLink({ url, children }: { url: string; children: string }) {
+  const href = safeHref(url);
+  return href ? (
+    <a className="citation" href={href} target="_blank" rel="noopener noreferrer nofollow">
+      {children}
+    </a>
+  ) : (
+    <span className="citation">{children}</span>
+  );
 }
 
 function formatCell(value: unknown): string {
@@ -86,6 +122,8 @@ function QueryResultView({ result }: { result: QueryResultData }) {
 export function ToolTraceCard({ tool }: { tool: ToolTrace }) {
   const results = searchResults(tool);
   const query = queryResult(tool);
+  const web = webResults(tool);
+  const page = fetchedPage(tool);
 
   return (
     <details className={`tool-card tool-${tool.status}`}>
@@ -102,6 +140,8 @@ export function ToolTraceCard({ tool }: { tool: ToolTrace }) {
             {query.truncated ? "+" : ""} rows
           </span>
         )}
+        {web && <span className="tool-latency">{web.length} results</span>}
+        {page && <span className="tool-latency">{hostname(page.final_url)}</span>}
         {tool.latencyMs !== undefined && <span className="tool-latency">{tool.latencyMs} ms</span>}
       </summary>
       <div className="tool-body">
@@ -127,6 +167,33 @@ export function ToolTraceCard({ tool }: { tool: ToolTrace }) {
                 </li>
               ))}
             </ol>
+          </>
+        )}
+        {web && web.length > 0 && (
+          <>
+            <div className="tool-section-label">Web results</div>
+            <ol className="hits">
+              {web.map((hit) => (
+                <li key={hit.n}>
+                  <div className="hit-head">
+                    <ExternalLink url={hit.url}>{hit.title}</ExternalLink>
+                    <span className="hit-score">{hostname(hit.url)}</span>
+                  </div>
+                  <div className="hit-snippet">{hit.snippet}</div>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+        {page && (
+          <>
+            <div className="tool-section-label">Page</div>
+            <div className="hit-head">
+              <ExternalLink url={page.final_url}>{page.title || page.final_url}</ExternalLink>
+              <span className="hit-score">
+                {page.chars.toLocaleString()} characters{page.truncated ? " (cut off)" : ""}
+              </span>
+            </div>
           </>
         )}
         <div className="tool-section-label">Result (sent to the model)</div>

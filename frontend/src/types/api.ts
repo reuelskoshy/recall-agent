@@ -149,6 +149,27 @@ export interface Citation {
   snippet: string;
 }
 
+/** One web_search result (`data.results` of a web_search tool result). */
+export interface WebSearchHit {
+  n: number;
+  title: string;
+  url: string;
+  snippet: string;
+  score: number | null;
+}
+
+/** `data` of a fetch_url tool result. */
+export interface FetchedPageData {
+  url: string;
+  /** After redirects. */
+  final_url: string;
+  title: string;
+  content_type: string;
+  chars: number;
+  truncated: boolean;
+  snippet: string;
+}
+
 // ---- Streaming events (SSE) — mirror app.agent.events ------------------------
 
 export type FinishReason = "stop" | "tool_calls" | "length" | "content_filter";

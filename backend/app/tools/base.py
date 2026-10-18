@@ -66,6 +66,11 @@ class Tool(ABC, Generic[InputT]):
     timeout_s: ClassVar[float | None] = None
     """Overrides the registry's default timeout for this tool."""
 
+    @classmethod
+    def enabled(cls, settings: Settings) -> bool:
+        """Whether this deployment offers the tool (e.g. False when its API key is unset)."""
+        return True
+
     @abstractmethod
     async def run(self, args: InputT, ctx: ToolContext) -> ToolResult:
         """Execute the tool with validated arguments."""

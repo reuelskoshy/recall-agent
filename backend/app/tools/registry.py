@@ -115,13 +115,14 @@ def _format_validation(exc: ValidationError) -> str:
 
 
 def build_registry(settings: Settings) -> ToolRegistry:
-    """Discover all tools and register one instance of each."""
+    """Discover all tools and register one instance of each enabled tool."""
     registry = ToolRegistry(
         default_timeout_s=settings.tool_timeout_s,
         max_result_chars=settings.tool_max_result_chars,
     )
     for cls in discover_tools():
-        registry.register(cls())
+        if cls.enabled(settings):
+            registry.register(cls())
     return registry
 
 

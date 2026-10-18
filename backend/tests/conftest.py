@@ -29,6 +29,8 @@ os.environ["EMBEDDING_PROVIDER"] = "fake"
 os.environ["SQL_BACKEND"] = "postgres"
 # Opt in per test: background extraction would consume scripted fake-LLM turns.
 os.environ["MEMORY_AUTO_EXTRACT"] = "false"
+# No real web searches from tests, whatever .env says.
+os.environ["WEB_SEARCH_API_KEY"] = ""
 get_settings.cache_clear()
 
 import asyncpg  # noqa: E402

@@ -1,7 +1,7 @@
 # Recall
 
-**An AI agent with tools, RAG over your documents, safe natural-language SQL, and
-long-term memory, built from scratch (no LangChain, no LlamaIndex).**
+**An AI agent with tools, RAG over your documents, safe natural-language SQL, web
+search, and long-term memory, built from scratch (no LangChain, no LlamaIndex).**
 
 [![CI](https://github.com/reuelskoshy/recall-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/reuelskoshy/recall-agent/actions/workflows/ci.yml)
 · **Live demo:** https://recall-s9qe.onrender.com (password-protected; ask me for access.
@@ -12,6 +12,7 @@ streams the answer, and remembers what you told it in earlier conversations:
 
 - *"What does the handbook say about carrying over leave?"* → searches uploaded documents, answers with citations
 - *"Which 3 customers have the highest total invoice amount?"* → writes SQL, validates it, runs it read-only, shows the query and the table
+- *"What changed in the latest pgvector release?"* → searches the web, reads the release page, links its sources
 - *"Remember that I prefer answers in bullet points."* → saved to long-term memory and applied in every later conversation
 
 ## Architecture
@@ -28,6 +29,7 @@ flowchart LR
         Registry --> T2["query_database"]
         Registry --> T3["save_memory /<br/>recall_memories"]
         Registry --> T4["calculator ·<br/>get_current_datetime"]
+        Registry --> T5["web_search ·<br/>fetch_url"]
         Loop -. "after each turn" .-> Extract["Memory extraction<br/>(background)"]
     end
 
@@ -36,6 +38,7 @@ flowchart LR
     Extract --> PG
     T2 --> Guard["SQL guard<br/>(sqlglot AST)"]
     Guard --> RO[("Read-only role<br/>Postgres or Snowflake")]
+    T5 --> SSRF["SSRF guard<br/>(public IPs only)"] --> Web(("Web<br/>Tavily · pages"))
 ```
 
 ### One agent turn
@@ -62,6 +65,16 @@ The model writes SQL against a sample company dataset (7 tables, 1,235 rows: emp
 
 The same tool runs on **PostgreSQL or Snowflake** behind a `SqlBackend` interface, selected by one env var. The Snowflake backend uses key-pair auth with a dedicated read-only service user. Both return identical answers on the same dataset. With the guard bypassed, the read-only role still refused `DELETE`, `CREATE`, role switching and account-usage queries.
 
+### Web search and page reading
+- `web_search` queries Tavily, a search API built for agents, behind a `SearchProvider` interface. `fetch_url` downloads a page and extracts its readable text, dropping scripts, menus and footers.
+- **SSRF protection.** The model chooses the URLs, so a malicious page or prompt could aim it at `localhost`, the private network, or the cloud metadata service (`169.254.169.254`). The check lives in a custom network backend under the HTTP client:
+  - it resolves the hostname and refuses unless *every* address is public, including IPv4 hidden inside IPv6 forms;
+  - it then connects to exactly the IP it checked, which defeats DNS rebinding while TLS still verifies the real hostname;
+  - every redirect hop passes through the same check, and only ports 80 and 443 are allowed.
+- **Prompt injection.** Web text reaches the model fenced as untrusted data, and the system prompt forbids following instructions found inside it. The real safety net is that no tool can cause harm: SQL is read-only and fetching is restricted to public addresses.
+- **Limits:** a download cap, a text cap, timeouts, text content types only, and an honest user-agent. Answers cite web facts as Markdown links, and links render only for `http(s)` URLs.
+- `web_search` registers only when an API key is configured; `fetch_url` needs no key.
+
 ### Long-term memory
 - Memories are short facts about the user ("The user prefers …") with a kind (fact, preference, instruction) and an importance from 1 to 5.
 - **Ranking:** `score = 0.7·relevance + 0.2·recency + 0.1·importance`, where:
@@ -83,7 +96,7 @@ The same tool runs on **PostgreSQL or Snowflake** behind a `SqlBackend` interfac
   - SQL backends.
   - Tools: one class plus a JSON schema each, auto-registered.
 - **Async throughout:** FastAPI, SQLAlchemy 2 async + asyncpg, Alembic migrations, Pydantic v2 settings.
-- **Tests:** 227 automated tests (216 pytest, 11 Vitest), covering the agent loop with a scripted LLM, the SQL guard's attack cases, memory ranking, the API, and deployment protections. Tests run against a real Postgres + pgvector, not mocks.
+- **Tests:** 270 automated tests (259 pytest, 11 Vitest), covering the agent loop with a scripted LLM, the SQL guard's attack cases, SSRF and prompt-injection cases for the web tools, memory ranking, the API, and deployment protections. Tests run against a real Postgres + pgvector, not mocks.
 - **CI/CD:** GitHub Actions runs ruff, mypy (strict), pytest, ESLint, Vitest and the TypeScript build. Render deploys only after CI passes.
 - **Public demo hardening:**
   - a shared-password gate using HMAC tokens;
@@ -96,7 +109,7 @@ The same tool runs on **PostgreSQL or Snowflake** behind a `SqlBackend` interfac
 |---|---|
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2 |
 | Data | PostgreSQL 16 + pgvector; Snowflake (optional SQL backend) |
-| AI | OpenAI-compatible chat API (IFM K2-Horizon in the demo), sentence-transformers `bge-small-en-v1.5`, sqlglot |
+| AI | OpenAI-compatible chat API (IFM K2-Horizon in the demo), sentence-transformers `bge-small-en-v1.5`, sqlglot, Tavily web search |
 | Frontend | React, TypeScript (strict), Vite, SSE streaming |
 | Ops | Docker, Docker Compose, GitHub Actions, Render, Neon |
 
@@ -125,7 +138,8 @@ cd frontend && npm ci && npm test          # frontend
 backend/app/
   agent/      agent loop, system prompt, SSE event types
   llm/        provider interface, OpenAI-compatible provider, scripted fake
-  tools/      tool registry + calculator, datetime, search_documents, query_database, memory tools
+  tools/      tool registry + calculator, datetime, search_documents, query_database, web, memory tools
+  web/        search providers, page fetching and text extraction, SSRF guard
   rag/        extraction, chunking, embeddings, hybrid retrieval, ingestion
   sql/        guard (sqlglot), executor, Postgres + Snowflake backends
   memory/     short-term history, long-term ranking, background extraction

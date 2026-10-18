@@ -84,6 +84,25 @@ class Settings(BaseSettings):
         default=5000, ge=100, description="Postgres statement_timeout for the SQL tool."
     )
 
+    # ---- Web tools ----
+    web_search_provider: Literal["tavily", "fake"] = Field(
+        default="tavily", description="Search API behind web_search (see app/web/search.py)."
+    )
+    web_search_api_key: str | None = Field(
+        default=None, description="Enables web_search (Tavily keys start with tvly-)."
+    )
+    web_search_max_results: int = Field(default=5, ge=1, le=10)
+    web_fetch_enabled: bool = Field(
+        default=True, description="Offer fetch_url (public addresses only; needs no key)."
+    )
+    web_fetch_max_bytes: int = Field(
+        default=2_000_000, ge=10_000, description="Stop downloading a page after this many bytes."
+    )
+    web_fetch_max_chars: int = Field(
+        default=3500, ge=500, description="Page text passed to the model (fits the tool limit)."
+    )
+    web_timeout_s: float = Field(default=10.0, gt=0, description="Per web request.")
+
     llm_provider: str = Field(default="openai", description="openai | fake (see llm/factory.py)")
     llm_timeout_s: float = 60.0
     llm_max_retries: int = Field(
@@ -185,6 +204,7 @@ class Settings(BaseSettings):
         "snowflake_private_key_passphrase",
         "demo_password",
         "static_dir",
+        "web_search_api_key",
         mode="before",
     )
     @classmethod

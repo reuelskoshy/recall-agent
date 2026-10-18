@@ -52,6 +52,7 @@ privileged attributes.
    | `LLM_REASONING_FIELD` | `reasoning` |
    | `TRUSTED_PROXY_HOPS` | `1` |
    | `DAILY_CHAT_LIMIT` | `200` |
+   | `WEB_SEARCH_API_KEY` | optional: a Tavily key (enables `web_search`) |
 
 4. **Advanced** → Health Check Path `/api/health`, Auto-Deploy **After CI
    Checks Pass**.
