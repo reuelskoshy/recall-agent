@@ -1,94 +1,89 @@
-# Deploying Recall: Google Cloud Run + Neon (free tier)
+# Deploying Recall: Render + Neon (free tier)
 
-One container (API + built frontend + embedding model) runs on Cloud Run;
-PostgreSQL with pgvector runs on Neon's free tier. GitHub Actions deploys every
-push to `main` once lint, type checks, and tests pass.
+The live demo runs as one container (API + built frontend + embedding model) on a
+free Render web service; PostgreSQL with pgvector runs on Neon's free tier.
+Render deploys each push to `main` after GitHub Actions CI passes.
 
 ```
-git push ─▶ GitHub Actions: tests ─▶ build image ─▶ Artifact Registry ─▶ Cloud Run
-                                                                            │
-browser ──HTTPS──▶ Cloud Run (us-east4, 1 vCPU / 2 GiB, scales to zero) ──TLS──▶ Neon (us-east-1)
-                   FastAPI + React build + bge-small, demo password gate     app tables, memories,
-                         │                                                    acme dataset, recall_reader
+git push ─▶ GitHub Actions (lint, types, tests) ─▶ Render builds the root Dockerfile
+                                                         │
+browser ──HTTPS──▶ Render (Virginia, 512 MB, sleeps when idle) ──TLS──▶ Neon (us-east-1)
+                   FastAPI + React build + bge-small, demo password gate    app tables, memories,
+                         │                                                   acme dataset, recall_reader
                          └──HTTPS──▶ LLM API (IFM K2-Horizon)
 ```
 
 On every start the container runs `deploy/start.sh`: migrations, the read-only
 role + Acme dataset, the sample handbook, then the API. All steps are
-idempotent, so restarts and redeploys are safe.
+idempotent, so restarts and redeploys are safe. The image peaks around 445 MB
+of RAM (measured under a 512 MB cap), so it fits the free instance.
 
 ## 1. Database (Neon)
 
 1. Sign up at https://neon.tech and create a project (Postgres 16 or 17) in
-   **AWS US East 1**, next to the Cloud Run region.
+   **AWS US East 1**, next to the Render region.
 2. **Connect** → turn **Connection pooling OFF** (use the direct endpoint, whose
    host does not contain `-pooler`). Recall uses prepared statements, which
    PgBouncer's transaction mode breaks.
-3. Copy the connection string (`postgresql://neondb_owner:...@ep-xxx.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require`).
-   Paste it as-is later: Recall converts it for asyncpg.
+3. Copy the connection string. Paste it as-is: Recall converts it for asyncpg.
 
 The first start creates the `vector` extension, all tables, the `acme` dataset,
-and the `recall_reader` login role (SELECT on `acme` only).
+and the `recall_reader` login role (SELECT on `acme` only). Neon's owner role is
+not a superuser, so the role is created without, and then checked for, any
+privileged attributes.
 
-## 2. Google Cloud project
+## 2. Render
 
-1. https://console.cloud.google.com → create a project (e.g. `recall-demo`) and
-   note its **project ID**.
-2. **Billing** → link a billing account (a card is required, but the usage below
-   stays inside the free tier). Then **Billing → Budgets & alerts** → create a
-   budget of e.g. $5 with email alerts, so any surprise is visible early.
-3. Open **Cloud Shell** (the `>_` icon, top right), upload `deploy/gcp-setup.sh`
-   (⋮ → Upload), and run:
+1. https://render.com → sign up with GitHub → **New → Web Service** → pick the
+   repository (if it is missing, grant Render access to it in GitHub →
+   Settings → Applications → Render → Configure).
+2. Language **Docker**, branch `main`, region **Virginia**, instance **Free**.
+3. **Environment** (only these; do not copy a local `.env`, whose Snowflake
+   and Docker settings do not apply here):
 
-   ```bash
-   bash gcp-setup.sh <project-id> <github-owner>/recall-agent
-   ```
+   | Key | Value |
+   |---|---|
+   | `DATABASE_URL` | the Neon connection string |
+   | `LLM_API_KEY` | your LLM key |
+   | `DEMO_PASSWORD` | the password you give visitors |
+   | `READONLY_DB_PASSWORD` | `python -c "import secrets; print(secrets.token_urlsafe(24))"` |
+   | `LLM_BASE_URL` | `https://api.ifm.ai/v1` |
+   | `LLM_CHAT_MODEL` | `IFM/K2-Horizon-375B-A23B` |
+   | `LLM_REASONING_FIELD` | `reasoning` |
+   | `TRUSTED_PROXY_HOPS` | `1` |
+   | `DAILY_CHAT_LIMIT` | `200` |
 
-   It enables the APIs, creates the image repository, two service accounts,
-   the secrets (it prompts for the Neon string, the LLM key, and the demo
-   password without echoing them, and generates the read-only DB password),
-   and a Workload Identity Federation pool that trusts only your repository.
-   It ends by printing four values.
-
-## 3. Connect GitHub
-
-In the GitHub repo: **Settings → Secrets and variables → Actions → Variables**
-→ add the four printed values as repository variables:
-`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
-`GCP_SERVICE_ACCOUNT`. No secrets are stored in GitHub: Actions exchanges a
-short-lived OIDC token for Google credentials on each run.
-
-Optional variables override the defaults: `LLM_BASE_URL`, `LLM_CHAT_MODEL`,
-`LLM_REASONING_FIELD`, `DAILY_CHAT_LIMIT`.
-
-## 4. Deploy
-
-Push to `main` (or re-run the latest workflow on the **Actions** tab). The
-`deploy` job builds the root `Dockerfile`, pushes it, runs `gcloud run deploy`,
-and smoke-tests `/api/health`; the job page links the live URL
-(`https://recall-xxxxx.us-east4.run.app`). Logs: Cloud Console → Cloud Run →
-`recall` → **Logs**.
+4. **Advanced** → Health Check Path `/api/health`, Auto-Deploy **After CI
+   Checks Pass**.
+5. Create the service. The first build takes 10–20 minutes; the log ends with
+   `Application startup complete`.
 
 ## Operating notes
 
-- **Cost control.** `--max-instances 1` caps compute; with no traffic the
-  service scales to zero. CPU stays allocated while an instance is up
-  (`--no-cpu-throttling`) so background memory extraction finishes after the
-  answer is streamed; the instance stops ~15 minutes after the last request.
-  Every chat turn costs one or more LLM calls (plus one for memory extraction);
-  the per-IP window and daily cap bound that, and `MEMORY_AUTO_EXTRACT=false`
-  halves it. Limits are in memory and reset when the instance restarts.
-- **Cold start.** The first visit after idle boots the container (~20–40 s:
-  loading PyTorch and the embedding model).
+- **Sleep.** Free instances sleep after 15 minutes without traffic; the next
+  visit wakes it in about a minute. Open the link yourself before sharing it.
+  Data lives in Neon, so nothing is lost.
+- **Cost control.** Every chat turn costs one or more LLM calls (plus one for
+  memory extraction). The per-IP window and daily cap bound that, and
+  `MEMORY_AUTO_EXTRACT=false` halves it. Limits are in memory and reset when
+  the instance restarts.
 - **Shared state.** The demo has one shared memory and conversation list (no
-  user accounts): visitors can see what others told it. Fine for a guided
-  demo; per-user isolation is listed as future work.
-- **Changing a secret** (e.g. a new LLM key or demo password): re-run
-  `gcp-setup.sh` and enter only that value (Enter keeps the others), then
-  redeploy. A new `DEMO_PASSWORD` logs everyone out.
-- **Snowflake.** The deployment uses the Postgres dataset (`SQL_BACKEND=postgres`).
-  Running against Snowflake would need the private key in Secret Manager
-  instead of a file.
+  user accounts): visitors can see what others told it.
+- **Changing a secret** (LLM key, demo password, Neon password): edit it under
+  Environment and redeploy. A new `DEMO_PASSWORD` logs everyone out.
+- **Snowflake.** The deployment uses the Postgres dataset (`SQL_BACKEND`
+  unset). Running against Snowflake would need the private key as a secret
+  file instead of a path in the repo.
+
+## Alternative: Google Cloud Run
+
+`ci.yml` also contains a Cloud Run deploy job (build → Artifact Registry →
+`gcloud run deploy`, authenticated with Workload Identity Federation, so no
+keys are stored in GitHub). It is skipped unless the repository variables
+`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` and
+`GCP_SERVICE_ACCOUNT` exist. `deploy/gcp-setup.sh`, run once in Cloud Shell,
+creates everything it needs (image repository, service accounts, Secret
+Manager secrets, the GitHub trust) and prints those four values.
 
 ## Run the production image anywhere
 
