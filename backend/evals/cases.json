@@ -1,0 +1,120 @@
+{
+  "dataset_version": "acme-v1",
+  "notes": "Expected answers come from samples/acme-employee-handbook.md and the deterministic Acme dataset (acme-v1). must_include: every group must match, any alternative within a group. Matching ignores case, thousands separators, and currency symbols.",
+  "cases": [
+    {
+      "id": "rag-carryover",
+      "category": "rag",
+      "question": "How many unused annual leave days can I carry over into next year, and when are the extra days forfeited?",
+      "expected_tools": ["search_documents"],
+      "expected_sources": ["2.1 Annual leave"],
+      "must_include": [["10"], ["31 march", "march 31"]]
+    },
+    {
+      "id": "rag-sick-certificate",
+      "category": "rag",
+      "question": "When do I need a medical certificate for sick leave?",
+      "expected_tools": ["search_documents"],
+      "expected_sources": ["2.2 Sick leave"],
+      "must_include": [["3 consecutive days", "three consecutive days", "more than 3 days", "longer than 3", "more than three"]]
+    },
+    {
+      "id": "rag-parental",
+      "category": "rag",
+      "question": "How much paid parental leave does a non-birthing parent get, and by when must it be taken?",
+      "expected_tools": ["search_documents"],
+      "expected_sources": ["2.3 Parental leave"],
+      "must_include": [["6 weeks", "six weeks"], ["12 months", "twelve months"]]
+    },
+    {
+      "id": "rag-home-office",
+      "category": "rag",
+      "question": "What is the reimbursement limit for home-office equipment, and how often can I claim it?",
+      "expected_tools": ["search_documents"],
+      "expected_sources": ["3. Remote work"],
+      "must_include": [["25000", "25k"], ["two years", "2 years"]]
+    },
+    {
+      "id": "rag-exact-token",
+      "category": "rag",
+      "question": "What is the internal incident code for a lost laptop, and how quickly must it be reported?",
+      "expected_tools": ["search_documents"],
+      "expected_sources": ["6. IT and security"],
+      "must_include": [["sec-lost-01"], ["1 hour", "one hour", "60 minutes"]]
+    },
+    {
+      "id": "rag-meal-allowance",
+      "category": "rag",
+      "question": "What's the daily meal allowance on a business trip to a metro city?",
+      "expected_tools": ["search_documents"],
+      "expected_sources": ["4. Travel and expenses"],
+      "must_include": [["1500"]],
+      "must_not_include": ["1000 in metro"]
+    },
+    {
+      "id": "refusal-company-car",
+      "category": "refusal",
+      "question": "What does the employee handbook say about company cars?",
+      "expected_tools": ["search_documents"],
+      "must_include": [["not cover", "doesn't cover", "does not cover", "no information", "not mention", "doesn't mention", "does not mention", "couldn't find", "could not find", "no mention", "nothing about", "not addressed", "doesn't address", "does not address", "no policy", "not include", "doesn't include", "does not include"]]
+    },
+    {
+      "id": "sql-headcount",
+      "category": "sql",
+      "question": "How many employees does Acme have, and how many of them work remotely?",
+      "expected_tools": ["query_database"],
+      "must_include": [["39"], ["17"]]
+    },
+    {
+      "id": "sql-eng-salary",
+      "category": "sql",
+      "question": "What is the average salary in the Engineering department?",
+      "expected_tools": ["query_database"],
+      "must_include": [["92121.43", "92121.4", "92121"]]
+    },
+    {
+      "id": "sql-top-earner",
+      "category": "sql",
+      "question": "Who is the highest-paid employee, and what is their salary?",
+      "expected_tools": ["query_database"],
+      "must_include": [["yusuf visser"], ["127800"]]
+    },
+    {
+      "id": "sql-cancelled-orders",
+      "category": "sql",
+      "question": "How many orders were cancelled?",
+      "expected_tools": ["query_database"],
+      "must_include": [["26"]]
+    },
+    {
+      "id": "rag-sql-carryover-limit",
+      "category": "rag+sql",
+      "question": "According to the handbook's carry-over limit, how many employees carried over more days than allowed into 2026?",
+      "expected_tools": ["search_documents", "query_database"],
+      "expected_sources": ["2.1 Annual leave"],
+      "must_include": [["none", "no employees", "no employee", "0 employees", "zero", "nobody", "no one"]]
+    },
+    {
+      "id": "tool-calculator",
+      "category": "tool",
+      "question": "What is 17.5% of 2,340,000?",
+      "expected_tools": ["calculator"],
+      "must_include": [["409500"]]
+    },
+    {
+      "id": "memory-cross-conversation",
+      "category": "memory",
+      "setup": ["Please remember this: my favourite programming language is Rust."],
+      "question": "Which programming language do I like most?",
+      "must_include": [["rust"]]
+    },
+    {
+      "id": "web-search",
+      "category": "web",
+      "requires_tool": "web_search",
+      "question": "Search the web: what does the pgvector extension add to PostgreSQL?",
+      "expected_tools": ["web_search"],
+      "must_include": [["vector"], ["similarity", "nearest neighbor", "nearest-neighbor", "nearest neighbour"]]
+    }
+  ]
+}

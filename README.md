@@ -96,7 +96,8 @@ The same tool runs on **PostgreSQL or Snowflake** behind a `SqlBackend` interfac
   - SQL backends.
   - Tools: one class plus a JSON schema each, auto-registered.
 - **Async throughout:** FastAPI, SQLAlchemy 2 async + asyncpg, Alembic migrations, Pydantic v2 settings.
-- **Tests:** 270 automated tests (259 pytest, 11 Vitest), covering the agent loop with a scripted LLM, the SQL guard's attack cases, SSRF and prompt-injection cases for the web tools, memory ranking, the API, and deployment protections. Tests run against a real Postgres + pgvector, not mocks.
+- **Tests:** 285 automated tests (274 pytest, 11 Vitest), covering the agent loop with a scripted LLM, the SQL guard's attack cases, SSRF and prompt-injection cases for the web tools, memory ranking, the API, and deployment protections. Tests run against a real Postgres + pgvector, not mocks.
+- **Evaluation:** an end-to-end eval ([backend/evals](backend/evals/README.md)) sends 15 questions through the real API and scores retrieval hit rate, tool routing, and answer correctness with deterministic checks. It scored **100% on all 14 runnable cases in two consecutive runs** (retrieval MRR 0.93–1.0), with web search skipped because no key was configured.
 - **CI/CD:** GitHub Actions runs ruff, mypy (strict), pytest, ESLint, Vitest and the TypeScript build. Render deploys only after CI passes.
 - **Public demo hardening:**
   - a shared-password gate using HMAC tokens;
@@ -157,5 +158,5 @@ Production is a single Docker image: the API, the built frontend and the embeddi
 
 - **Single shared workspace.** There are no user accounts, so all demo visitors share conversations and memory. Per-user isolation would add a `user_id` to conversations, documents and memories.
 - **Connect your own database.** Point `query_database` at a user-supplied database, with schema introspection, a check that the credentials are truly read-only, and schema retrieval for large databases.
-- **Evaluation harness.** A fixed question set scoring retrieval hit rate and answer correctness, run in CI to catch regressions in prompts or ranking.
+- **Eval in CI.** Run the eval suite on every change to the prompt or retrieval settings (it needs an LLM key, so it isn't in the default CI job), and grow it with harder multi-step questions.
 - **Rate limits are in-process**, which is fine for one instance; several replicas would need Redis.

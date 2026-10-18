@@ -30,3 +30,6 @@ backend/data/uploads/
 # Local credentials (Snowflake key pair, generated setup SQL)
 secrets/
 *.p8
+
+# Eval reports (summaries worth keeping go in evals/README.md)
+backend/evals/results/
