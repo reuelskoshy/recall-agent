@@ -27,6 +27,15 @@ def _literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+PRIVILEGED_ATTRIBUTES = (
+    "rolsuper",
+    "rolcreatedb",
+    "rolcreaterole",
+    "rolreplication",
+    "rolbypassrls",
+)
+
+
 async def provision_readonly_role(conn: AsyncConnection, settings: Settings) -> None:
     """Create or update the login role used by the SQL tool.
 
@@ -34,16 +43,30 @@ async def provision_readonly_role(conn: AsyncConnection, settings: Settings) -> 
     cannot create anything, and is only granted SELECT on the dataset schema
     (see `grant_readonly`), so it cannot read app tables such as conversations.
     Defaults make every session read-only with a statement timeout.
+
+    New roles get no privileged attributes by default, and they are checked
+    rather than set: managed Postgres (Neon, Supabase, RDS) runs this as a
+    non-superuser, and Postgres 16+ rejects any `ALTER ROLE ... NOSUPERUSER`
+    from a non-superuser, even when it changes nothing.
     """
     role = settings.readonly_db_user  # validated as a plain identifier in Settings
     exists = await conn.scalar(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role})
     verb = "ALTER" if exists else "CREATE"
     await conn.execute(
-        text(
-            f"{verb} ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION "
-            f"PASSWORD {_literal(settings.readonly_db_password)}"
-        )
+        text(f"{verb} ROLE {role} LOGIN PASSWORD {_literal(settings.readonly_db_password)}")
     )
+    privileged = (
+        await conn.execute(
+            text(f"SELECT {', '.join(PRIVILEGED_ATTRIBUTES)} FROM pg_roles WHERE rolname = :r"),
+            {"r": role},
+        )
+    ).one()
+    granted = [name for name, value in zip(PRIVILEGED_ATTRIBUTES, privileged, strict=True) if value]
+    if granted:
+        raise RuntimeError(
+            f"Role {role} has privileged attributes ({', '.join(granted)}); the SQL tool "
+            "must connect as an unprivileged role. Use another READONLY_DB_USER or drop the role."
+        )
     await conn.execute(text(f"ALTER ROLE {role} SET default_transaction_read_only = on"))
     await conn.execute(
         text(f"ALTER ROLE {role} SET statement_timeout = {settings.sql_statement_timeout_ms}")
