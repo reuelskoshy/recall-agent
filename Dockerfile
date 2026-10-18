@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Production image: one container serving the API and the built frontend.
-# Used by Hugging Face Spaces (Docker SDK); also runs anywhere with
+# Deployed to Google Cloud Run (deploy/DEPLOY.md); also runs anywhere with
 #   docker build -t recall . && docker run -p 7860:7860 --env-file .env recall
 # Local development uses docker-compose.yml instead (hot reload, Vite dev server).
 
@@ -28,7 +28,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ENVIRONMENT=production \
     PORT=7860
 
-# Hugging Face Spaces run containers as UID 1000.
+# Run as an unprivileged user (UID 1000), not root.
 RUN useradd --create-home --uid 1000 user
 WORKDIR /app
 

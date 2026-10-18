@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     trusted_proxy_hops: int = Field(
         default=0,
         ge=0,
-        description="Reverse proxies in front of the app (1 on HF Spaces/Railway). Their "
+        description="Reverse proxies in front of the app (1 on Cloud Run/HF Spaces). Their "
         "X-Forwarded-For entries identify the client; 0 = use the socket address.",
     )
     daily_chat_limit: int = Field(

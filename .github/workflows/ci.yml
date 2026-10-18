@@ -71,31 +71,57 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
-  # Continuous deployment: after both test jobs pass on main, mirror the repo to
-  # the Hugging Face Space, which rebuilds the root Dockerfile and goes live.
-  # Configure in GitHub: Settings -> Secrets and variables -> Actions
-  #   secret   HF_TOKEN  (a Hugging Face *write* token)
-  #   variable HF_SPACE  (e.g. your-username/recall)
+  # Continuous deployment: after both test jobs pass on main, build the root
+  # Dockerfile, push it to Artifact Registry, and roll it out on Cloud Run.
+  # GitHub authenticates to Google Cloud with Workload Identity Federation
+  # (short-lived OIDC tokens, no service-account key stored anywhere).
+  # One-time setup: deploy/gcp-setup.sh prints the repository variables to add
+  # under Settings -> Secrets and variables -> Actions -> Variables:
+  #   GCP_PROJECT_ID, GCP_REGION, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
   # Without them (e.g. on forks) the job is skipped.
   deploy:
     needs: [backend, frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.HF_SPACE != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets google-github-actions/auth request an OIDC token
     environment:
-      name: huggingface
-      url: https://huggingface.co/spaces/${{ vars.HF_SPACE }}
+      name: cloud-run
+      url: ${{ steps.deploy.outputs.url }}
     concurrency:
-      group: deploy-huggingface
+      group: deploy-cloud-run
       cancel-in-progress: false
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: recall
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/recall/recall:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
         with:
-          fetch-depth: 0 # a shallow clone cannot be pushed to another remote
-      - name: Push to Hugging Face Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE: ${{ vars.HF_SPACE }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Log Docker in to Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Deploy to Cloud Run
+        id: deploy
+        # --no-cpu-throttling keeps CPU after the response is sent, so the
+        # background memory extraction finishes. One instance: the rate limiter
+        # is in-process, and it caps the bill. Secrets come from Secret Manager.
         run: |
-          if [ -z "$HF_TOKEN" ]; then echo "::error::HF_TOKEN secret is not set"; exit 1; fi
-          HF_USER="${HF_SPACE%%/*}"
-          git push --force "https://${HF_USER}:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" HEAD:main
+          gcloud run deploy "$SERVICE"             --project "$PROJECT" --region "$REGION" --image "$IMAGE"             --service-account "recall-run@${PROJECT}.iam.gserviceaccount.com"             --allow-unauthenticated --port 7860             --cpu 1 --memory 2Gi --no-cpu-throttling --cpu-boost             --min-instances 0 --max-instances 1 --concurrency 20 --timeout 300             --set-env-vars "LLM_BASE_URL=${{ vars.LLM_BASE_URL || 'https://api.ifm.ai/v1' }},LLM_CHAT_MODEL=${{ vars.LLM_CHAT_MODEL || 'IFM/K2-Horizon-375B-A23B' }},LLM_REASONING_FIELD=${{ vars.LLM_REASONING_FIELD || 'reasoning' }},TRUSTED_PROXY_HOPS=1,DAILY_CHAT_LIMIT=${{ vars.DAILY_CHAT_LIMIT || '200' }}"             --set-secrets "DATABASE_URL=recall-database-url:latest,LLM_API_KEY=recall-llm-api-key:latest,DEMO_PASSWORD=recall-demo-password:latest,READONLY_DB_PASSWORD=recall-readonly-db-password:latest"
+          echo "url=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 10 --retry-all-errors "${{ steps.deploy.outputs.url }}/api/health"

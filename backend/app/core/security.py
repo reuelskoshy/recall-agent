@@ -4,8 +4,8 @@ This is a demo gate, not user accounts. One password (DEMO_PASSWORD) is shared
 with the people you send the link to; it is exchanged for a bearer token the
 browser sends on every API call. The token is an HMAC of the password, so
 changing DEMO_PASSWORD revokes every token at once, and no server-side session
-store is needed. A header (not a cookie) is used because Hugging Face embeds
-Spaces in an iframe, where third-party cookies are often blocked.
+store is needed. A header (not a cookie) keeps it working when a host embeds the
+app in an iframe (e.g. Hugging Face Spaces), where third-party cookies are often blocked.
 
 Rate limits protect the LLM bill: a sliding window per client IP, plus a global
 daily cap. They are in-memory (one process), so they reset on restart, which is
