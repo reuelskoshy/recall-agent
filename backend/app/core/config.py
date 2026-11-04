@@ -128,6 +128,9 @@ class Settings(BaseSettings):
         default=6, ge=1, description="Max LLM calls per turn; the last one gets no tools."
     )
     agent_turn_timeout_s: float = Field(default=120.0, description="Wall-clock budget per turn.")
+    memory_recall_timeout_s: float = Field(
+        default=5.0, gt=0, description="Memory recall budget; past it, the turn goes on without."
+    )
     tool_timeout_s: float = Field(default=15.0, description="Default per-tool-call timeout.")
     tool_max_result_chars: int = Field(
         default=4000, description="Tool output longer than this is truncated before the LLM."
@@ -157,6 +160,17 @@ class Settings(BaseSettings):
         default=20, description="Candidates fetched from each of vector and keyword search."
     )
     max_upload_mb: int = 20
+    ingest_timeout_s: float = Field(
+        default=600.0, gt=0, description="A document still not ingested after this is failed."
+    )
+
+    # ---- Recovery ----
+    reaper_interval_s: float = Field(
+        default=60.0,
+        ge=0,
+        description="How often to fail runs and ingestions orphaned by a crash or restart "
+        "(0 = never).",
+    )
 
     # ---- Long-term memory ----
     # score = w_sim * similarity + w_rec * recency + w_imp * importance, each term in [0, 1].

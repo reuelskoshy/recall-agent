@@ -14,11 +14,12 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.events import (
@@ -58,9 +59,14 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 TITLE_MAX_CHARS = 60
 SUMMARY_MAX_CHARS = 500
 EMPTY_ANSWER_FALLBACK = "I wasn't able to finish an answer within this turn's step limit."
+UNEXPECTED_ERROR = "Something went wrong while answering. It was logged; please try again."
+DB_UNAVAILABLE = "Could not save your message: the database is unavailable. Please retry."
+CLIENT_DISCONNECTED = "The client disconnected before the answer finished."
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +89,10 @@ class AgentConfig:
 
 class AgentTimeoutError(Exception):
     """The turn exceeded its wall-clock budget."""
+
+
+def _timeout_message(config: AgentConfig) -> str:
+    return f"The agent exceeded its {config.turn_timeout_s:g}s time limit."
 
 
 def make_title(first_message: str) -> str:
@@ -190,6 +200,91 @@ async def _timed_execute(
     return result, _elapsed_ms(start)
 
 
+async def _before_deadline(events: AsyncIterator[T], deadline: float) -> AsyncIterator[T]:
+    """Re-yield `events`, raising TimeoutError if the next one is not ready by `deadline`.
+
+    The timeout wraps each `__anext__` only, never a `yield`, so it cannot cancel
+    the consumer. This is what bounds a model call that stalls mid-stream: the
+    SDK's own timeout is per read, and its retries multiply it.
+    """
+    iterator = aiter(events)
+    try:
+        while True:
+            try:
+                async with asyncio.timeout_at(deadline):
+                    event = await anext(iterator)
+            except StopAsyncIteration:
+                return
+            yield event
+    finally:
+        aclose = getattr(iterator, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+
+# Writes that must outlive a cancelled request (see `_record_cancellation`).
+_background: set[asyncio.Task[None]] = set()
+
+
+async def _mark_cancelled(run_id: uuid.UUID, iterations: int, latency_ms: int) -> None:
+    try:
+        async with SessionLocal() as session:
+            await session.execute(
+                update(AgentRun)
+                .where(AgentRun.id == run_id, AgentRun.status == "running")
+                .values(
+                    status="cancelled",
+                    iterations=iterations,
+                    error=CLIENT_DISCONNECTED,
+                    latency_ms=latency_ms,
+                    finished_at=func.now(),
+                )
+            )
+            await session.commit()
+    except Exception:
+        # The reaper marks it "interrupted" later instead.
+        logger.exception("Run %s: could not record cancellation", run_id)
+
+
+def _record_cancellation(run_id: uuid.UUID, iterations: int, latency_ms: int) -> None:
+    """Mark a run cancelled from a separate task.
+
+    The request's own task is being cancelled (the client went away), and under
+    anyio every further `await` in it is cancelled too, so the write runs in its
+    own task, on a fresh session.
+    """
+    task = asyncio.create_task(_mark_cancelled(run_id, iterations, latency_ms))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def drain_background_writes() -> None:
+    """Wait for pending cancellation writes (app shutdown, and tests)."""
+    while _background:
+        await asyncio.gather(*list(_background), return_exceptions=True)
+
+
+async def _finish_failed(
+    session: AsyncSession,
+    recorder: _RunRecorder,
+    run_id: uuid.UUID,
+    status: str,
+    iterations: int,
+    error: str,
+) -> None:
+    """Record a failed run without raising: the session may be broken, the DB may be down.
+
+    The rollback discards the half-finished round, so stored history never holds
+    a tool call without its results. If even this fails, the reaper closes the run.
+    """
+    try:
+        await session.rollback()
+        recorder.finish(status, iterations, error=error)
+        await session.commit()
+    except Exception:
+        logger.exception("Run %s: could not record status %r", run_id, status)
+
+
 async def run_turn(
     session: AsyncSession,
     provider: LLMProvider,
@@ -205,6 +300,11 @@ async def run_turn(
     The user message and run row are committed before the model is called, so
     they survive failures. Each tool round (assistant call + results) is
     committed atomically, so stored history never holds a call without results.
+
+    Failure contract: the stream always ends with exactly one `Done` or `Error`
+    (unless the client is gone), and the run never stays "running": it ends
+    completed | failed | timeout here, cancelled if the client disconnects, or
+    interrupted (set by the reaper) if the process dies.
     """
     if conversation is None:
         conversation = Conversation(title=make_title(user_text))
@@ -219,71 +319,79 @@ async def run_turn(
         status="running",
     )
     session.add(run)
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        logger.exception("Could not start a run: database write failed")
+        yield Error(message=DB_UNAVAILABLE)
+        return
+    # Plain values: after a rollback, reading an expired ORM attribute needs a
+    # lazy load, which an async session cannot do.
+    run_id, conversation_id = run.id, conversation.id
     yield ConversationStarted(
-        conversation_id=conversation.id, title=conversation.title, run_id=run.id
+        conversation_id=conversation_id, title=conversation.title, run_id=run_id
     )
 
-    history = await load_history(session, conversation.id, config.history_limit)
-    document_names = (
-        await session.scalars(
-            select(Document.filename)
-            .where(Document.status == "ready")
-            .order_by(Document.created_at.desc())
-        )
-    ).all()
-    # Long-term memory: core memories (instructions, important facts) always, plus
-    # the best-ranked others (similarity + recency + importance). Never fatal.
-    memory_lines: list[str] = []
-    try:
-        core = await core_memories(
-            session, settings.memory_core_min_importance, settings.memory_core_limit
-        )
-        recalled = await recall_memories(
-            session,
-            embedder,
-            user_text,
-            RankWeights.from_settings(settings),
-            limit=settings.memory_inject_k,
-            min_similarity=settings.memory_min_similarity,
-            exclude=[m.id for m in core],
-        )
-        used = [
-            {
-                "id": str(m.id),
-                "content": m.content,
-                "kind": m.kind,
-                "importance_level": m.importance,
-                "reason": "core",
-            }
-            for m in core
-        ] + [{**s.to_dict(), "reason": "relevant"} for s in recalled]
-        memory_lines = [m.content for m in core] + [s.memory.content for s in recalled]
-    except Exception:
-        logger.exception("Run %s: memory recall failed", run.id)
-        await session.rollback()
-        used = []
-    if used:
-        run.memories_used = used
-        await session.commit()
-        yield MemoriesRecalled(memories=used)
-    system_prompt = build_system_prompt(document_names, memory_lines)
-    messages = [ChatMessage(role="system", content=system_prompt), *history]
-    ctx = ToolContext(
-        conversation_id=conversation.id,
-        session_factory=SessionLocal,
-        embedder=embedder,
-        settings=settings,
-    )
+    deadline = asyncio.get_running_loop().time() + config.turn_timeout_s
     recorder = _RunRecorder(session, run)
     iteration = 0
 
     try:
-        for iteration in range(1, config.max_iterations + 1):
-            if recorder.elapsed_s > config.turn_timeout_s:
-                raise AgentTimeoutError(
-                    f"The agent exceeded its {config.turn_timeout_s:g}s time limit."
+        history = await load_history(session, conversation_id, config.history_limit)
+        document_names = (
+            await session.scalars(
+                select(Document.filename)
+                .where(Document.status == "ready")
+                .order_by(Document.created_at.desc())
+            )
+        ).all()
+        # Long-term memory: core memories (instructions, important facts) always, plus
+        # the best-ranked others (similarity + recency + importance). Never fatal, and
+        # time-boxed: a slow embedder or database degrades the turn instead of stalling it.
+        memory_lines: list[str] = []
+        try:
+            async with asyncio.timeout(settings.memory_recall_timeout_s):
+                core = await core_memories(
+                    session, settings.memory_core_min_importance, settings.memory_core_limit
                 )
+                recalled = await recall_memories(
+                    session,
+                    embedder,
+                    user_text,
+                    RankWeights.from_settings(settings),
+                    limit=settings.memory_inject_k,
+                    min_similarity=settings.memory_min_similarity,
+                    exclude=[m.id for m in core],
+                )
+            used = [
+                {
+                    "id": str(m.id),
+                    "content": m.content,
+                    "kind": m.kind,
+                    "importance_level": m.importance,
+                    "reason": "core",
+                }
+                for m in core
+            ] + [{**s.to_dict(), "reason": "relevant"} for s in recalled]
+            memory_lines = [m.content for m in core] + [s.memory.content for s in recalled]
+        except Exception:
+            logger.exception("Run %s: memory recall failed; continuing without memories", run_id)
+            await session.rollback()
+            used = []
+        if used:
+            run.memories_used = used
+            await session.commit()
+            yield MemoriesRecalled(memories=used)
+        system_prompt = build_system_prompt(document_names, memory_lines)
+        messages = [ChatMessage(role="system", content=system_prompt), *history]
+        ctx = ToolContext(
+            conversation_id=conversation_id,
+            session_factory=SessionLocal,
+            embedder=embedder,
+            settings=settings,
+        )
+
+        for iteration in range(1, config.max_iterations + 1):
             tools_allowed = iteration < config.max_iterations
             prompt = (
                 messages
@@ -291,25 +399,30 @@ async def run_turn(
                 else [*messages, ChatMessage(role="system", content=TOOL_BUDGET_EXHAUSTED)]
             )
 
-            # 1. Call the model, streaming its text to the client as it arrives.
+            # 1. Call the model, streaming its text to the client as it arrives. The
+            #    turn deadline bounds the call too, even if it stalls mid-stream.
             started = time.perf_counter()
             reply = _ModelReply(text="", reasoning="", calls=[], usage=None, finish_reason="stop")
             parts: list[str] = []
             reasoning_parts: list[str] = []
-            async for event in provider.stream_chat(
-                prompt, registry.specs() if tools_allowed else ()
-            ):
-                if isinstance(event, TextDelta):
-                    parts.append(event.text)
-                    yield Token(text=event.text)
-                elif isinstance(event, ReasoningDelta):
-                    reasoning_parts.append(event.text)
-                elif isinstance(event, ToolCallEvent):
-                    reply.calls.append(event.call)
-                elif isinstance(event, UsageEvent):
-                    reply.usage = event.usage
-                elif isinstance(event, StreamEnd):
-                    reply.finish_reason = event.finish_reason
+            try:
+                async for event in _before_deadline(
+                    provider.stream_chat(prompt, registry.specs() if tools_allowed else ()),
+                    deadline,
+                ):
+                    if isinstance(event, TextDelta):
+                        parts.append(event.text)
+                        yield Token(text=event.text)
+                    elif isinstance(event, ReasoningDelta):
+                        reasoning_parts.append(event.text)
+                    elif isinstance(event, ToolCallEvent):
+                        reply.calls.append(event.call)
+                    elif isinstance(event, UsageEvent):
+                        reply.usage = event.usage
+                    elif isinstance(event, StreamEnd):
+                        reply.finish_reason = event.finish_reason
+            except TimeoutError as exc:
+                raise AgentTimeoutError(_timeout_message(config)) from exc
             reply.text = "".join(parts)
             reply.reasoning = "".join(reasoning_parts)
             recorder.llm_step(iteration, provider.model, _elapsed_ms(started), reply)
@@ -328,25 +441,30 @@ async def run_turn(
                 await session.commit()
                 if settings.memory_auto_extract:
                     schedule_extraction(
-                        SessionLocal, provider, embedder, settings, conversation.id, user_text, text
+                        SessionLocal, provider, embedder, settings, conversation_id, user_text, text
                     )
                 yield Done(
                     message_id=final.id,
-                    run_id=run.id,
+                    run_id=run_id,
                     finish_reason=reply.finish_reason,
                     iterations=iteration,
                     usage=recorder.usage(),
                 )
                 return
 
-            # 3. Run the requested tools concurrently, then feed results back.
+            # 3. Run the requested tools concurrently, then feed results back. Each
+            #    tool has its own timeout; the turn deadline caps them together.
             for call in reply.calls:
                 yield ToolCallStarted(
                     id=call.id, name=call.name, arguments=parse_arguments(call.arguments)
                 )
-            outcomes = await asyncio.gather(
-                *(_timed_execute(registry, call, ctx) for call in reply.calls)
-            )
+            try:
+                async with asyncio.timeout_at(deadline):
+                    outcomes = await asyncio.gather(
+                        *(_timed_execute(registry, call, ctx) for call in reply.calls)
+                    )
+            except TimeoutError as exc:
+                raise AgentTimeoutError(_timeout_message(config)) from exc
 
             assistant = ChatMessage(
                 role="assistant",
@@ -391,12 +509,23 @@ async def run_turn(
             await session.commit()
 
     except LLMError as exc:
-        logger.warning("Run %s: LLM call failed: %s", run.id, exc)
-        recorder.finish("failed", iteration, error=str(exc))
-        await session.commit()
-        yield Error(message=str(exc), run_id=run.id)
+        logger.warning("Run %s: LLM call failed: %s", run_id, exc)
+        await _finish_failed(session, recorder, run_id, "failed", iteration, str(exc))
+        yield Error(message=str(exc), run_id=run_id)
     except AgentTimeoutError as exc:
-        logger.warning("Run %s: %s", run.id, exc)
-        recorder.finish("timeout", iteration, error=str(exc))
-        await session.commit()
-        yield Error(message=str(exc), run_id=run.id)
+        logger.warning("Run %s: %s", run_id, exc)
+        await _finish_failed(session, recorder, run_id, "timeout", iteration, str(exc))
+        yield Error(message=str(exc), run_id=run_id)
+    except (asyncio.CancelledError, GeneratorExit):
+        # The client disconnected (or the server is shutting down). Nothing more can
+        # be sent; just make sure the run does not stay "running".
+        logger.info("Run %s: cancelled at iteration %d", run_id, iteration)
+        _record_cancellation(run_id, iteration, round(recorder.elapsed_s * 1000))
+        raise
+    except Exception as exc:
+        # A bug, or the database failing mid-turn: still close the run and tell the user.
+        logger.exception("Run %s: unexpected failure", run_id)
+        await _finish_failed(
+            session, recorder, run_id, "failed", iteration, f"{type(exc).__name__}: {exc}"
+        )
+        yield Error(message=UNEXPECTED_ERROR, run_id=run_id)

@@ -61,14 +61,51 @@ export class SSEParser {
   }
 }
 
-/** Read a fetch Response body as a stream of SSE messages. */
-export async function* readSSE(response: Response): AsyncGenerator<SSEMessage> {
+/** Thrown when a stream goes silent for longer than its idle timeout. */
+export class StreamStalledError extends Error {
+  constructor(idleMs: number) {
+    super(`The server stopped responding (no data for ${String(Math.round(idleMs / 1000))}s).`);
+    this.name = "StreamStalledError";
+  }
+}
+
+/** Resolve with `read`, or call `onTimeout` and reject if it takes longer than `ms`. */
+function within<T>(read: Promise<T>, ms: number | undefined, onTimeout: () => void): Promise<T> {
+  if (!ms) return read;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Reject first: `onTimeout` may settle `read` (cancelling a reader resolves
+      // its pending read as done), which would otherwise win the race and turn a
+      // stall into what looks like a clean end of stream.
+      reject(new StreamStalledError(ms));
+      onTimeout();
+    }, ms);
+  });
+  return Promise.race([read, timeout]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+/**
+ * Read a fetch Response body as a stream of SSE messages.
+ *
+ * With `idleTimeoutMs`, a connection that delivers nothing at all (not even the
+ * server's keep-alive pings) for that long is cancelled and a
+ * `StreamStalledError` is thrown, instead of waiting forever on a dead socket.
+ */
+export async function* readSSE(
+  response: Response,
+  idleTimeoutMs?: number,
+): AsyncGenerator<SSEMessage> {
   if (!response.body) throw new Error("Response has no body to stream");
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   const parser = new SSEParser();
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await within(reader.read(), idleTimeoutMs, () => {
+        void reader.cancel();
+      });
       if (done) break;
       yield* parser.push(value);
     }

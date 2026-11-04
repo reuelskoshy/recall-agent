@@ -86,7 +86,7 @@ class AgentRun(Base):
         ForeignKey("conversations.id", ondelete="CASCADE")
     )
     user_input: Mapped[str] = mapped_column(Text)
-    # running | completed | failed | timeout
+    # running | completed | failed | timeout | cancelled (client left) | interrupted (reaper)
     status: Mapped[str] = mapped_column(String(20), default="running")
     provider: Mapped[str] = mapped_column(String(50))
     model: Mapped[str] = mapped_column(String(200))

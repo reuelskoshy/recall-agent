@@ -137,6 +137,7 @@ async def upload_document(
         data,
         settings.rag_chunk_size,
         settings.rag_chunk_overlap,
+        settings.ingest_timeout_s,
     )
     return document
 
@@ -190,6 +191,7 @@ async def reindex_document(
         data,
         settings.rag_chunk_size,
         settings.rag_chunk_overlap,
+        settings.ingest_timeout_s,
     )
     return document
 

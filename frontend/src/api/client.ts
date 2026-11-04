@@ -88,6 +88,9 @@ async function request<T>(path: string, init?: RequestInit, okStatuses: number[]
  * POST /api/chat and yield typed events as they stream in.
  * Throws ApiError if the server rejects the request before streaming (404, 422, 503).
  */
+/** The server pings every 15s while a turn runs; three missed pings means the stream is dead. */
+const STREAM_IDLE_TIMEOUT_MS = 45_000;
+
 async function* streamChat(body: ChatRequest, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
   const response = await fetch("/api/chat", {
     method: "POST",
@@ -100,13 +103,18 @@ async function* streamChat(body: ChatRequest, signal?: AbortSignal): AsyncGenera
   if (response.status === 401) onUnauthorized?.();
   if (!response.ok) throw await toApiError(response, "/chat");
 
-  for await (const message of readSSE(response)) {
+  let finished = false;
+  for await (const message of readSSE(response, STREAM_IDLE_TIMEOUT_MS)) {
     const event = JSON.parse(message.data) as AgentEvent;
     if (event.type !== message.event) {
       throw new Error(`SSE event name "${message.event}" does not match payload "${event.type}"`);
     }
+    if (event.type === "done" || event.type === "error") finished = true;
     yield event;
   }
+  // Every turn the server completes ends with "done" or "error"; anything else
+  // means the connection was cut (proxy timeout, server restart, network drop).
+  if (!finished) throw new Error("The connection closed before the answer finished.");
 }
 
 /** Typed wrappers for every backend endpoint live here. */
