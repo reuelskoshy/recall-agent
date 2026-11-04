@@ -27,6 +27,23 @@ class Settings(BaseSettings):
     )
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # ---- Database resilience ----
+    db_connect_timeout_s: float = Field(default=10.0, gt=0, description="Per connection attempt.")
+    db_connect_retries: int = Field(
+        default=3, ge=0, description="Retries for a failed connect (cold start, network blip)."
+    )
+    db_command_timeout_s: float = Field(
+        default=30.0, gt=0, description="Client-side limit for any single statement."
+    )
+    db_pool_timeout_s: float = Field(
+        default=10.0, gt=0, description="Wait for a free pooled connection before failing."
+    )
+    db_pool_recycle_s: int = Field(
+        default=300,
+        ge=-1,
+        description="Replace connections older than this (Neon drops idle ones; -1 = never).",
+    )
+
     # ---- Public demo deployment ----
     demo_password: str | None = Field(
         default=None,
@@ -118,6 +135,26 @@ class Settings(BaseSettings):
         default=None,
         description="Send each assistant message's reasoning back under this key "
         "(e.g. 'reasoning' for IFM K2). Leave unset for OpenAI.",
+    )
+
+    llm_breaker_failure_threshold: int = Field(
+        default=3,
+        ge=0,
+        description="Transient LLM failures in a row that open the circuit breaker "
+        "(fail fast / go to the fallback). 0 = no breaker.",
+    )
+    llm_breaker_reset_s: float = Field(
+        default=30.0, gt=0, description="How long the breaker stays open before a probe."
+    )
+    llm_fallback_model: str | None = Field(
+        default=None,
+        description="Model to use when the primary is down (unset = no fallback). Same "
+        "OpenAI-compatible protocol; base URL and key default to the primary's.",
+    )
+    llm_fallback_base_url: str | None = None
+    llm_fallback_api_key: str | None = None
+    llm_fallback_reasoning_field: str | None = Field(
+        default=None, description="Like LLM_REASONING_FIELD, for the fallback (not inherited)."
     )
 
     chat_history_limit: int = Field(
@@ -214,6 +251,10 @@ class Settings(BaseSettings):
     @field_validator(
         "llm_base_url",
         "llm_reasoning_field",
+        "llm_fallback_model",
+        "llm_fallback_base_url",
+        "llm_fallback_api_key",
+        "llm_fallback_reasoning_field",
         "database_readonly_url",
         "snowflake_private_key_passphrase",
         "demo_password",

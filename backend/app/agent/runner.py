@@ -126,6 +126,7 @@ class _ModelReply:
     calls: list[ToolCall]
     usage: Usage | None
     finish_reason: FinishReason
+    model: str | None = None
 
 
 class _RunRecorder:
@@ -421,11 +422,14 @@ async def run_turn(
                         reply.usage = event.usage
                     elif isinstance(event, StreamEnd):
                         reply.finish_reason = event.finish_reason
+                        reply.model = event.model
             except TimeoutError as exc:
                 raise AgentTimeoutError(_timeout_message(config)) from exc
             reply.text = "".join(parts)
             reply.reasoning = "".join(reasoning_parts)
-            recorder.llm_step(iteration, provider.model, _elapsed_ms(started), reply)
+            # The fallback model may have answered instead of the primary.
+            model = reply.model or provider.model
+            recorder.llm_step(iteration, model, _elapsed_ms(started), reply)
 
             # 2. No tool calls (or no tools allowed): this is the final answer.
             if not reply.calls or not tools_allowed:

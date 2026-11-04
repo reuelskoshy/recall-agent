@@ -99,6 +99,8 @@ class StreamEnd:
     """Always the last event of a successful stream."""
 
     finish_reason: FinishReason
+    model: str | None = None
+    """The model that actually answered, when a wrapper may have switched models."""
 
 
 StreamEvent = TextDelta | ReasoningDelta | ToolCallEvent | UsageEvent | StreamEnd
@@ -108,7 +110,14 @@ class LLMError(Exception):
     """Raised by providers for any upstream failure (auth, rate limit, network, ...).
 
     Providers wrap vendor exceptions in this so callers handle one error type.
+    `transient` marks failures that say the provider is unhealthy (timeouts,
+    network errors, 429, 5xx) as opposed to a bad request or a bad key; only
+    transient failures trip the circuit breaker or trigger a fallback.
     """
+
+    def __init__(self, message: str, *, transient: bool = False) -> None:
+        super().__init__(message)
+        self.transient = transient
 
 
 class LLMProvider(ABC):

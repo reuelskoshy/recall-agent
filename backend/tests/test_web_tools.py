@@ -291,6 +291,55 @@ async def test_tavily_request_and_response() -> None:
     ("status", "reason"), [(401, "rejected the API key"), (432, "quota"), (500, "HTTP 500")]
 )
 async def test_tavily_errors_are_explained(status: int, reason: str) -> None:
-    provider = TavilySearch("tvly-key", transport=serve(httpx.Response(status)))
+    provider = TavilySearch("tvly-key", transport=serve(httpx.Response(status)), retry_delay_s=0)
     with pytest.raises(SearchError, match=reason):
         await provider.search("anything", 3)
+
+
+def flaky(*failures: httpx.Response | Exception) -> tuple[httpx.MockTransport, list[int]]:
+    """A transport that fails with each of `failures` in turn, then succeeds."""
+    queue, calls = list(failures), [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls[0] += 1
+        if queue:
+            failure = queue.pop(0)
+            if isinstance(failure, Exception):
+                raise failure
+            return failure
+        return httpx.Response(200, json={"results": [{"url": "https://ok.test", "title": "ok"}]})
+
+    return httpx.MockTransport(handler), calls
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.Response(503), httpx.Response(429), httpx.ConnectError("refused")],
+    ids=["503", "429", "connect-error"],
+)
+async def test_tavily_retries_one_fast_failure(failure: httpx.Response | Exception) -> None:
+    transport, calls = flaky(failure)
+    hits = await TavilySearch("k", transport=transport, retry_delay_s=0).search("q", 3)
+    assert [h.url for h in hits] == ["https://ok.test"]
+    assert calls[0] == 2
+
+
+async def test_tavily_gives_up_after_one_retry() -> None:
+    transport, calls = flaky(httpx.Response(502), httpx.Response(502))
+    with pytest.raises(SearchError, match="HTTP 502"):
+        await TavilySearch("k", transport=transport, retry_delay_s=0).search("q", 3)
+    assert calls[0] == 2
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.Response(401), httpx.Response(432), httpx.ReadTimeout("slow")],
+    ids=["bad-key", "quota", "timeout"],
+)
+async def test_tavily_does_not_retry_what_a_retry_cannot_fix(
+    failure: httpx.Response | Exception,
+) -> None:
+    transport, calls = flaky(failure)
+    with pytest.raises(SearchError):
+        await TavilySearch("k", transport=transport, retry_delay_s=0).search("q", 3)
+    assert calls[0] == 1

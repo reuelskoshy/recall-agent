@@ -5,6 +5,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, cast, get_args
 
+import httpx2 as httpx  # the OpenAI SDK is built on the httpx2 fork
 import openai
 from openai import AsyncOpenAI
 
@@ -125,6 +126,15 @@ def describe_error(exc: openai.OpenAIError) -> str:
     return f"Model request failed: {exc}"
 
 
+def is_transient(exc: openai.OpenAIError) -> bool:
+    """Whether the failure means the provider is unhealthy (vs. a request it rejected)."""
+    if isinstance(exc, openai.APIConnectionError):  # includes APITimeoutError
+        return True
+    if isinstance(exc, openai.APIStatusError):
+        return exc.status_code in (408, 409, 429) or exc.status_code >= 500
+    return False
+
+
 def normalize_finish_reason(reason: str) -> FinishReason:
     """Map OpenAI's finish reasons onto the neutral set."""
     if reason == "function_call":
@@ -203,8 +213,15 @@ class OpenAIProvider(LLMProvider):
                         finish_reason = normalize_finish_reason(choice.finish_reason)
         except openai.OpenAIError as exc:
             logger.warning("LLM request to %s failed: %r", self.model, exc)
-            raise LLMError(describe_error(exc)) from exc
+            raise LLMError(describe_error(exc), transient=is_transient(exc)) from exc
+        except httpx.HTTPError as exc:
+            # The connection broke after streaming began; the SDK does not wrap these.
+            logger.warning("LLM stream from %s broke: %r", self.model, exc)
+            raise LLMError(
+                "The connection to the model provider dropped mid-answer. Please try again.",
+                transient=True,
+            ) from exc
 
         for call in buffer.drain():
             yield ToolCallEvent(call)
-        yield StreamEnd(finish_reason)
+        yield StreamEnd(finish_reason, model=self.model)

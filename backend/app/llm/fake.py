@@ -26,6 +26,8 @@ class ScriptedTurn:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     error: str | None = None
+    transient: bool = False
+    """Mark `error` as transient (an outage), so it trips breakers and fallbacks."""
     reasoning: str = ""
 
 
@@ -61,7 +63,7 @@ class FakeProvider(LLMProvider):
         for i, word in enumerate(words):
             yield TextDelta(word if i == 0 else f" {word}")
         if turn.error is not None:
-            raise LLMError(turn.error)
+            raise LLMError(turn.error, transient=turn.transient)
         for call in turn.tool_calls:
             yield ToolCallEvent(call)
         prompt_tokens = sum(len(m.content.split()) for m in messages)

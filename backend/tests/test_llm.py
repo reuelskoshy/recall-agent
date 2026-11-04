@@ -30,6 +30,7 @@ from app.llm.openai_provider import (
     normalize_finish_reason,
     to_openai_message,
 )
+from app.llm.resilience import ResilientProvider
 
 
 def chunk(
@@ -93,7 +94,7 @@ async def test_openai_stream_normalizes_text_and_usage() -> None:
     assert events[:2] == [TextDelta("Hel"), TextDelta("lo")]
     assert isinstance(events[2], UsageEvent)
     assert events[2].usage.total_tokens == 7
-    assert events[-1] == StreamEnd("stop")
+    assert events[-1] == StreamEnd("stop", model="m")
 
 
 async def test_openai_stream_reassembles_fragmented_parallel_tool_calls() -> None:
@@ -120,7 +121,7 @@ async def test_openai_stream_reassembles_fragmented_parallel_tool_calls() -> Non
     assert events == [
         ToolCallEvent(ToolCall("call_a", "calculator", '{"expr": "2+2"}')),
         ToolCallEvent(ToolCall("call_b", "get_time", "{}")),
-        StreamEnd("tool_calls"),
+        StreamEnd("tool_calls", model="m"),
     ]
 
 
@@ -155,7 +156,11 @@ def test_normalize_finish_reason(raw: str, expected: str) -> None:
 
 
 def test_factory_builds_named_provider_and_rejects_unknown() -> None:
-    assert isinstance(build_provider(Settings(llm_provider="fake")), FakeProvider)
+    provider = build_provider(Settings(llm_provider="fake"))
+    assert isinstance(provider, ResilientProvider)  # wrapped in the circuit breaker
+    assert isinstance(provider.primary, FakeProvider)
+    unwrapped = build_provider(Settings(llm_provider="fake", llm_breaker_failure_threshold=0))
+    assert isinstance(unwrapped, FakeProvider)
     with pytest.raises(LLMError, match="Unknown LLM_PROVIDER"):
         build_provider(Settings(llm_provider="nope"))
 
@@ -210,8 +215,9 @@ def test_reasoning_field_is_sent_back_on_every_assistant_message_when_configured
 def test_factory_passes_reasoning_field_and_blank_means_unset() -> None:
     settings = Settings(llm_provider="openai", llm_api_key="k", llm_reasoning_field="reasoning")
     provider = build_provider(settings)
-    assert isinstance(provider, OpenAIProvider)
-    assert provider.reasoning_field == "reasoning"
+    assert isinstance(provider, ResilientProvider)
+    assert isinstance(provider.primary, OpenAIProvider)
+    assert provider.primary.reasoning_field == "reasoning"
     assert Settings(llm_reasoning_field="").llm_reasoning_field is None
 
 

@@ -7,6 +7,7 @@ from app.core.config import Settings, get_settings
 from app.llm.base import LLMError, LLMProvider
 from app.llm.fake import FakeProvider
 from app.llm.openai_provider import OpenAIProvider
+from app.llm.resilience import ResilientProvider
 
 ProviderFactory = Callable[[Settings], LLMProvider]
 
@@ -24,13 +25,40 @@ PROVIDERS: dict[str, ProviderFactory] = {
 
 
 def build_provider(settings: Settings) -> LLMProvider:
-    """Instantiate the provider named by `settings.llm_provider`."""
+    """Instantiate the provider named by `settings.llm_provider`, with its safety net.
+
+    The primary (and the optional fallback model) are wrapped in a circuit
+    breaker unless LLM_BREAKER_FAILURE_THRESHOLD=0 and no fallback is set.
+    """
     try:
         factory = PROVIDERS[settings.llm_provider]
     except KeyError:
         known = ", ".join(sorted(PROVIDERS))
         raise LLMError(f"Unknown LLM_PROVIDER {settings.llm_provider!r} (known: {known})") from None
-    return factory(settings)
+    primary = factory(settings)
+    fallback = _build_fallback(settings)
+    if settings.llm_breaker_failure_threshold == 0 and fallback is None:
+        return primary
+    return ResilientProvider(
+        primary,
+        fallback,
+        # With the breaker off, a huge threshold keeps it closed but still fails over.
+        failure_threshold=settings.llm_breaker_failure_threshold or 2**31,
+        reset_timeout_s=settings.llm_breaker_reset_s,
+    )
+
+
+def _build_fallback(settings: Settings) -> LLMProvider | None:
+    if not settings.llm_fallback_model:
+        return None
+    return OpenAIProvider(
+        api_key=settings.llm_fallback_api_key or settings.llm_api_key,
+        model=settings.llm_fallback_model,
+        base_url=settings.llm_fallback_base_url or settings.llm_base_url,
+        timeout_s=settings.llm_timeout_s,
+        reasoning_field=settings.llm_fallback_reasoning_field,
+        max_retries=settings.llm_max_retries,
+    )
 
 
 @lru_cache
