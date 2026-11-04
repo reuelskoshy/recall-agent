@@ -89,6 +89,28 @@ The same tool runs on **PostgreSQL or Snowflake** behind a `SqlBackend` interfac
 - **Two ways in:** the model can call `save_memory` explicitly, and a background extraction pass after each turn catches what it didn't save. The extraction prompt forbids saving guesses inferred from requests.
 - The Memory page shows, searches, edits and deletes memories. Each answer shows which memories were used.
 
+### Designed for failure
+Every dependency (the LLM, the database, the web, the user's browser) is assumed to fail eventually. The rule is that every turn ends, every failure is recorded, and nothing stays stuck in a "running" or "processing" state.
+
+| When this fails | Recall does this |
+|---|---|
+| The model hangs or stalls mid-answer | Each turn has a 120 s wall-clock deadline that bounds every streamed chunk and every tool batch. The run is recorded as `timeout` and the user gets a clear message. |
+| The model provider is down | A circuit breaker opens after 3 transient failures (timeouts, network errors, 429, 5xx) and fails fast for 30 s instead of making every user wait, then lets one probe through. An optional fallback model (`LLM_FALLBACK_*`) answers instead, as long as no text has streamed yet. Refused requests (bad key, bad input) don't trip the breaker. |
+| A tool is slow or crashes | Each tool call has its own timeout. The error goes back to the model as the tool's result, so it can recover or explain. |
+| Memory recall is slow | It gets a 5 s budget; after that the turn continues without memories. |
+| The database is unreachable | Connections are retried with backoff (never on bad credentials). Connecting, pool checkout and every statement have timeouts. The turn ends with an error event instead of hanging, and readiness reports the database down. |
+| The user closes the tab mid-answer | The run is recorded as `cancelled` in the background. |
+| The server restarts mid-turn or mid-upload | A reaper marks orphaned runs `interrupted` and orphaned uploads `failed`, so they can be retried. Ingestion also has its own 10-minute limit. |
+| Web search is flaky | One retry after a fast transient failure. No retry on timeouts, bad keys or exhausted quota. |
+| The stream silently stops | The browser gives up after 45 s without any event (the server pings every 15 s), and a stream that closes without `done` is shown as an error, not a cut-off answer. |
+
+**Health checks:**
+- `GET /api/health/live` only confirms the process is running, and is what the platform uses to decide restarts, so a database blip doesn't restart a healthy container.
+- `GET /api/health/ready` reports each dependency (database latency, LLM breaker state, embeddings, web search). It returns 503 only when the database is down; a failing LLM is "degraded", since history, documents and memories still work.
+- The UI polls readiness and shows a banner saying what's broken and what that means for you, e.g. *"Language model down (requests paused for 25s): chat answers may fail."*
+
+Every row in the table has a test that injects that failure (`test_failure_modes.py`, `test_llm_resilience.py`, `test_db_resilience.py`), and the database, provider and disconnect cases were also checked against the running stack.
+
 ### Engineering
 - **Pluggable everything:**
   - LLM providers: any OpenAI-compatible API, plus a scripted fake for tests.
@@ -96,7 +118,7 @@ The same tool runs on **PostgreSQL or Snowflake** behind a `SqlBackend` interfac
   - SQL backends.
   - Tools: one class plus a JSON schema each, auto-registered.
 - **Async throughout:** FastAPI, SQLAlchemy 2 async + asyncpg, Alembic migrations, Pydantic v2 settings.
-- **Tests:** 285 automated tests (274 pytest, 11 Vitest), covering the agent loop with a scripted LLM, the SQL guard's attack cases, SSRF and prompt-injection cases for the web tools, memory ranking, the API, and deployment protections. Tests run against a real Postgres + pgvector, not mocks.
+- **Tests:** 339 automated tests (322 pytest, 17 Vitest), covering the agent loop with a scripted LLM, injected failures (stalls, outages, disconnects, restarts), the SQL guard's attack cases, SSRF and prompt-injection cases for the web tools, memory ranking, the API, and deployment protections. Tests run against a real Postgres + pgvector, not mocks.
 - **Evaluation:** an end-to-end eval ([backend/evals](backend/evals/README.md)) sends 15 questions through the real API and scores retrieval hit rate, tool routing, and answer correctness with deterministic checks. It scored **100% on all 14 runnable cases in two consecutive runs** (retrieval MRR 0.93–1.0), with web search skipped because no key was configured.
 - **CI/CD:** GitHub Actions runs ruff, mypy (strict), pytest, ESLint, Vitest and the TypeScript build. Render deploys only after CI passes.
 - **Public demo hardening:**
@@ -138,7 +160,8 @@ cd frontend && npm ci && npm test          # frontend
 ```
 backend/app/
   agent/      agent loop, system prompt, SSE event types
-  llm/        provider interface, OpenAI-compatible provider, scripted fake
+  core/       settings, logging, access gate, orphaned-run reaper
+  llm/        provider interface, OpenAI-compatible provider, circuit breaker + fallback, scripted fake
   tools/      tool registry + calculator, datetime, search_documents, query_database, web, memory tools
   web/        search providers, page fetching and text extraction, SSRF guard
   rag/        extraction, chunking, embeddings, hybrid retrieval, ingestion
@@ -152,7 +175,7 @@ deploy/       production entrypoint and deployment guide
 
 ## Deployment
 
-Production is a single Docker image: the API, the built frontend and the embedding model, baked in so there's no download at startup. On boot it migrates, provisions the read-only role, seeds the dataset and the sample handbook (all idempotent), then serves. The live demo runs on Render with Neon Postgres; see [deploy/DEPLOY.md](deploy/DEPLOY.md).
+Production is a single Docker image: the API, the built frontend and the embedding model, baked in so there's no download at startup. On boot it migrates, provisions the read-only role, seeds the dataset and the sample handbook (all idempotent), then serves. Render health-checks `/api/health/live`. The live demo runs on Render with Neon Postgres; see [deploy/DEPLOY.md](deploy/DEPLOY.md).
 
 ## Limitations and future work
 
