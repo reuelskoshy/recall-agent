@@ -10,6 +10,7 @@
   --user-bubble: #eef0ff;
   --ok: #1a7f37;
   --bad: #b42318;
+  --warn: #9a6700;
   --radius: 12px;
   --sidebar-w: 260px;
   font-family:
@@ -36,6 +37,7 @@
     --user-bubble: #2a2b45;
     --ok: #4ac26b;
     --bad: #f97066;
+    --warn: #e3b341;
   }
 }
 
@@ -134,6 +136,31 @@ button {
 .badge-bad {
   color: var(--bad);
   border-color: currentColor;
+}
+
+.badge-warn {
+  color: var(--warn);
+  border-color: currentColor;
+}
+
+/* Shown under the header while a dependency is impaired. */
+.health-banner {
+  padding: 6px 16px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid currentColor;
+  background: var(--surface);
+}
+
+.health-banner p {
+  margin: 0;
+}
+
+.health-banner-warn {
+  color: var(--warn);
+}
+
+.health-banner-bad {
+  color: var(--bad);
 }
 
 /* ---- Sidebar --------------------------------------------------------------- */

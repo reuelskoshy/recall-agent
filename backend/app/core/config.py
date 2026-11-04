@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     db_pool_timeout_s: float = Field(
         default=10.0, gt=0, description="Wait for a free pooled connection before failing."
     )
+    health_db_timeout_s: float = Field(
+        default=3.0, gt=0, description="Readiness reports the database down after this long."
+    )
     db_pool_recycle_s: int = Field(
         default=300,
         ge=-1,

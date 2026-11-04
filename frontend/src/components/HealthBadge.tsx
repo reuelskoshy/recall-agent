@@ -1,20 +1,29 @@
-import { useHealth } from "../hooks/useHealth";
+import type { HealthState } from "../hooks/useHealth";
 
-/** Small status pill showing whether the backend, Postgres, and pgvector are up. */
-export function HealthBadge() {
-  const health = useHealth();
+const TONE_CLASS = { ok: "badge-ok", warn: "badge-warn", bad: "badge-bad" } as const;
 
+/** Small status pill in the header; hover for what is wrong. */
+export function HealthBadge({ health }: { health: HealthState }) {
   if (health.kind === "loading") {
     return <span className="badge">Checking backend…</span>;
   }
-  if (health.kind === "error") {
-    return <span className="badge badge-bad">Backend unreachable</span>;
-  }
-
-  const { status, database, pgvector } = health.data;
+  const { tone, label, problems } = health.summary;
   return (
-    <span className={`badge ${status === "ok" ? "badge-ok" : "badge-bad"}`}>
-      API {status} · DB {database} · pgvector {pgvector ?? "missing"}
+    <span className={`badge ${TONE_CLASS[tone]}`} title={problems.join("\n") || undefined}>
+      {label}
     </span>
+  );
+}
+
+/** Full-width notice under the header while something is impaired (visible on mobile too). */
+export function HealthBanner({ health }: { health: HealthState }) {
+  if (health.kind === "loading" || health.summary.tone === "ok") return null;
+  const { tone, problems } = health.summary;
+  return (
+    <div className={`health-banner health-banner-${tone}`} role="status">
+      {problems.map((problem) => (
+        <p key={problem}>{problem}</p>
+      ))}
+    </div>
   );
 }

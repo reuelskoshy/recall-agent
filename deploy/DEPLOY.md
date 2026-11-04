@@ -54,8 +54,10 @@ privileged attributes.
    | `DAILY_CHAT_LIMIT` | `200` |
    | `WEB_SEARCH_API_KEY` | optional: a Tavily key (enables `web_search`) |
 
-4. **Advanced** → Health Check Path `/api/health`, Auto-Deploy **After CI
-   Checks Pass**.
+4. **Advanced** → Health Check Path `/api/health/live`, Auto-Deploy **After CI
+   Checks Pass**. Use liveness, not `/api/health`: readiness returns 503 when
+   Neon is unreachable, and Render would restart a healthy container over a
+   database blip. `/api/health/ready` shows each dependency's status.
 5. Create the service. The first build takes 10–20 minutes; the log ends with
    `Application startup complete`.
 

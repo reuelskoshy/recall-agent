@@ -3,17 +3,26 @@
  * Keep in sync with backend/app/api/*.py and backend/app/agent/events.py.
  */
 
-/** GET /api/health — mirrors app.api.health.HealthResponse */
 /** GET /api/auth/status: whether this deployment needs the demo password. */
 export interface AuthStatus {
   required: boolean;
   authenticated: boolean;
 }
 
+/** One dependency in GET /api/health/ready — mirrors app.api.health.ComponentHealth */
+export interface ComponentHealth {
+  name: string;
+  status: "ok" | "degraded" | "down" | "disabled";
+  detail: string | null;
+  latency_ms: number | null;
+}
+
+/** GET /api/health/ready — mirrors app.api.health.HealthResponse */
 export interface HealthResponse {
-  status: "ok" | "degraded";
+  status: "ok" | "degraded" | "down";
   database: "ok" | "unreachable";
   pgvector: string | null;
+  components: ComponentHealth[];
 }
 
 /** POST /api/chat body — mirrors app.api.chat.ChatRequest */

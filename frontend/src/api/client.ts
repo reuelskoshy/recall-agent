@@ -126,8 +126,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     }),
-  // /health returns a body on 503 too (status "degraded"), so it is not treated as an error.
-  health: () => request<HealthResponse>("/health", undefined, [503]),
+  // Readiness returns a body on 503 too (status "down"), so it is not treated as an error.
+  health: () => request<HealthResponse>("/health/ready", undefined, [503]),
   listConversations: () => request<ConversationSummary[]>("/conversations"),
   getConversation: (id: string) => request<ConversationDetail>(`/conversations/${id}`),
   deleteConversation: (id: string) =>

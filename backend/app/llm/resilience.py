@@ -132,6 +132,11 @@ class ResilientProvider(LLMProvider):
         return self._routes[0].breaker
 
     @property
+    def fallback_breaker(self) -> CircuitBreaker | None:
+        """The fallback model's breaker, if a fallback is configured."""
+        return self._routes[1].breaker if len(self._routes) > 1 else None
+
+    @property
     def fallback_model(self) -> str | None:
         """The fallback model's name, if one is configured."""
         return self._routes[1].provider.model if len(self._routes) > 1 else None

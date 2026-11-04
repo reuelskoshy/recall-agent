@@ -2,10 +2,11 @@ import { useCallback, useState } from "react";
 
 import { AccessGate } from "./components/AccessGate";
 import { ChatView } from "./components/ChatView";
-import { HealthBadge } from "./components/HealthBadge";
+import { HealthBadge, HealthBanner } from "./components/HealthBadge";
 import { Sidebar } from "./components/Sidebar";
 import { useChat } from "./hooks/useChat";
 import { useConversations } from "./hooks/useConversations";
+import { useHealth } from "./hooks/useHealth";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { MemoryPage } from "./pages/MemoryPage";
 
@@ -20,6 +21,7 @@ const VIEW_LABEL: Record<View, string> = {
 /** The app itself: header, conversations, and the three views. */
 function Workspace() {
   const { conversations, error: listError, refresh, remove } = useConversations();
+  const health = useHealth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<View>("chat");
 
@@ -76,8 +78,9 @@ function Workspace() {
             </button>
           ))}
         </nav>
-        <HealthBadge />
+        <HealthBadge health={health} />
       </header>
+      <HealthBanner health={health} />
       <div className={`app-body ${sidebarOpen ? "sidebar-open" : ""}`}>
         <Sidebar
           conversations={conversations}
