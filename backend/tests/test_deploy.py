@@ -118,11 +118,11 @@ async def test_built_frontend_is_served_next_to_the_api(tmp_path: Path) -> None:
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         page = await c.get("/")
-        health = await c.get("/api/health")
+        health = await c.get("/api/health/live")
 
     assert page.status_code == 200
     assert "<title>Recall</title>" in page.text
-    assert health.json()["status"] == "ok"
+    assert health.json() == {"status": "ok"}  # the API wins over the SPA fallback
 
 
 async def test_sample_documents_are_ingested_once(tmp_path: Path) -> None:
