@@ -108,7 +108,21 @@ async def db(test_db: None) -> AsyncIterator[None]:
     """Use the test database and wipe its data afterwards."""
     yield
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE conversations, documents, memories CASCADE"))
+        await conn.execute(text(f"TRUNCATE {', '.join(TRUNCATED_TABLES)} CASCADE"))
+
+
+# Roots of every table tests write to; CASCADE reaches the rest (drafts, analyses, ...).
+TRUNCATED_TABLES = (
+    "conversations",
+    "documents",
+    "memories",
+    "candidate_profile",
+    "profile_entries",
+    "profile_skills",
+    "companies",
+    "jobs",
+    "ingestion_runs",
+)
 
 
 def parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:

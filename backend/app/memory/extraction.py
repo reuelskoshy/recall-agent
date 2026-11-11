@@ -166,7 +166,10 @@ async def extract_and_store(
             )
             proposals = parse_extraction(reply)
             if not proposals and "memories" not in reply:
-                logger.warning("Memory extraction returned unparseable output: %.200s", reply)
+                # Length only: the reply can quote what the user said.
+                logger.warning(
+                    "Memory extraction returned unparseable output (%d chars)", len(reply)
+                )
 
             outcomes: list[SaveOutcome] = []
             for proposal in proposals:
@@ -202,12 +205,13 @@ async def extract_and_store(
                     )
                 except MemoryRejectedError as exc:
                     logger.info("Skipped extracted memory: %s", exc)
+            # Counts and ids only: memory text is personal data and stays out of logs.
             logger.info(
-                "Memory extraction for %s: %d proposed, %d saved%s",
+                "Memory extraction for %s: %d proposed, %d saved (%s)",
                 conversation_id,
                 len(proposals),
                 len(outcomes),
-                "".join(f"\n  {o.action}: {o.memory.content}" for o in outcomes),
+                ", ".join(f"{o.action} {o.memory.id}" for o in outcomes) or "none",
             )
             return outcomes
     except Exception:

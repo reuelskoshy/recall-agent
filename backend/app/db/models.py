@@ -1,7 +1,7 @@
 """ORM models. Alembic autogenerate compares these against the live schema."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
@@ -10,17 +10,21 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
     Index,
     Integer,
     LargeBinary,
+    Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
+    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -245,4 +249,397 @@ class Memory(Base):
     # Recency is measured from the last time the memory was recalled (or saved).
     last_accessed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Recall Jobs: a private job-search pipeline (see docs/jobs-plan.md).
+#
+# Allowed values are plain strings guarded by CHECK constraints rather than
+# Postgres ENUM types: adding a value is then a one-line constraint change,
+# not an `ALTER TYPE` that cannot run inside a transaction.
+# ---------------------------------------------------------------------------
+
+ENTRY_KINDS = ("education", "experience", "project", "link", "achievement")
+ATS_KINDS = ("greenhouse", "lever", "ashby", "none")
+CONTACT_POLICIES = ("allowed", "application_form_only", "do_not_contact")
+JOB_SOURCES = ("greenhouse", "lever", "ashby", "hn", "web_search")
+VERDICTS = ("eligible", "flagged", "rejected", "error")
+DRAFT_KINDS = ("outreach_email", "application_answers")
+DRAFT_STATUSES = ("needs_review", "approved", "discarded")
+APPLICATION_STATUSES = (
+    "new",
+    "shortlisted",
+    "drafted",
+    "applied",
+    "interview",
+    "offer",
+    "rejected",
+    "withdrawn",
+    "skipped",
+)
+RUN_TRIGGERS = ("cron", "manual")
+RUN_STATUSES = ("running", "completed", "partial", "failed", "interrupted")
+
+
+def _one_of(column: str, values: tuple[str, ...], nullable: bool = False) -> CheckConstraint:
+    """CHECK that `column` holds one of `values` (named ck_<table>_<column>)."""
+    listed = ", ".join(f"'{v}'" for v in values)
+    condition = f"{column} IN ({listed})"
+    if nullable:
+        condition = f"{column} IS NULL OR {condition}"
+    return CheckConstraint(condition, name=column)
+
+
+def _created_at() -> Mapped[datetime]:
+    return mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+def _updated_at() -> Mapped[datetime]:
+    return mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CandidateProfile(Base):
+    """The one candidate's preferences and headline facts (exactly one row, id = 1).
+
+    Details (education, jobs, projects) are `ProfileEntry` rows and skills are
+    `ProfileSkill` rows, so the claims check can match a draft against
+    individual facts instead of free text.
+    """
+
+    __tablename__ = "candidate_profile"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="single_row"),
+        CheckConstraint("years_experience >= 0", name="years_experience"),
+        CheckConstraint("min_salary IS NULL OR min_salary >= 0", name="min_salary"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1, autoincrement=False)
+    full_name: Mapped[str] = mapped_column(String(200), default="")
+    headline: Mapped[str] = mapped_column(String(300), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    graduation_year: Mapped[int | None] = mapped_column(Integer)
+    degree: Mapped[str | None] = mapped_column(String(100))
+    degree_field: Mapped[str | None] = mapped_column(String(200))
+    years_experience: Mapped[float] = mapped_column(Numeric(4, 1, asdecimal=False), default=0)
+    allowed_locations: Mapped[list[str]] = mapped_column(
+        ARRAY(String(200)), default=list, server_default="{}"
+    )
+    remote_ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    role_families: Mapped[list[str]] = mapped_column(
+        ARRAY(String(30)), default=lambda: ["engineering"], server_default="{engineering}"
+    )
+    employment_types: Mapped[list[str]] = mapped_column(
+        ARRAY(String(30)), default=list, server_default="{}"
+    )
+    min_salary: Mapped[int | None] = mapped_column(Integer)
+    salary_currency: Mapped[str | None] = mapped_column(String(3))
+    # Profile summary embedded for the semantic match (Phase 4); refreshed on edit.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), deferred=True)
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class ProfileEntry(Base):
+    """One dated fact block: a degree, a job, a project, a link, an achievement."""
+
+    __tablename__ = "profile_entries"
+    __table_args__ = (
+        _one_of("kind", ENTRY_KINDS),
+        CheckConstraint(
+            "end_date IS NULL OR start_date IS NULL OR end_date >= start_date", name="dates"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str] = mapped_column(String(300))
+    organization: Mapped[str | None] = mapped_column(String(300))
+    location: Mapped[str | None] = mapped_column(String(200))
+    start_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)  # NULL = ongoing
+    description: Mapped[str] = mapped_column(Text, default="")
+    technologies: Mapped[list[str]] = mapped_column(
+        ARRAY(String(100)), default=list, server_default="{}"
+    )
+    url: Mapped[str | None] = mapped_column(String(2000))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class ProfileSkill(Base):
+    """A skill the candidate can claim. Names are unique ignoring case."""
+
+    __tablename__ = "profile_skills"
+    __table_args__ = (
+        Index("uq_profile_skills_lower_name", func.lower(text("name")), unique=True),
+        CheckConstraint("years IS NULL OR years >= 0", name="years"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100))
+    category: Mapped[str | None] = mapped_column(String(50))
+    years: Mapped[float | None] = mapped_column(Numeric(4, 1, asdecimal=False))
+    created_at: Mapped[datetime] = _created_at()
+
+
+class ResumeVariant(Base):
+    """A resume tailored to a kind of role. The file itself is an uploaded `Document`."""
+
+    __tablename__ = "resume_variants"
+    __table_args__ = (
+        Index(
+            "uq_resume_variants_one_default",
+            "is_default",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    target_role_family: Mapped[str | None] = mapped_column(String(30))
+    # SET NULL: deleting the document must not fail; the variant just loses its file.
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL")
+    )
+    notes: Mapped[str] = mapped_column(Text, default="")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class Company(Base):
+    """An employer: where its jobs come from, and whether it may be contacted.
+
+    `contact_policy` defaults to application_form_only, so a company discovered
+    by search is never contactable until the candidate decides it is.
+    """
+
+    __tablename__ = "companies"
+    __table_args__ = (
+        _one_of("ats", ATS_KINDS),
+        _one_of("contact_policy", CONTACT_POLICIES),
+        CheckConstraint("ats = 'none' OR board_token IS NOT NULL", name="board_token"),
+        Index("uq_companies_lower_name", func.lower(text("name")), unique=True),
+        Index(
+            "uq_companies_ats_board_token",
+            "ats",
+            "board_token",
+            unique=True,
+            postgresql_where=text("board_token IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200))
+    website: Mapped[str | None] = mapped_column(String(500))
+    ats: Mapped[str] = mapped_column(String(20), default="none")
+    # The company's id on its job board, e.g. "stripe" in boards.greenhouse.io/stripe.
+    board_token: Mapped[str | None] = mapped_column(String(200))
+    # True = fetch its board on every daily run.
+    watch: Mapped[bool] = mapped_column(Boolean, default=False)
+    contact_policy: Mapped[str] = mapped_column(
+        String(30), default="application_form_only", server_default="application_form_only"
+    )
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class Job(Base):
+    """One listing, deduplicated by (source, external_id).
+
+    `content_hash` covers the normalised title, location and text: when a
+    listing is edited the hash changes and the job is analysed again. The id is
+    a small integer so the candidate can say "draft outreach for job 12".
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        _one_of("source", JOB_SOURCES),
+        UniqueConstraint("source", "external_id", name="uq_jobs_source_external_id"),
+        Index("ix_jobs_first_seen_at", "first_seen_at"),
+        Index("ix_jobs_company_id", "company_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    source: Mapped[str] = mapped_column(String(20))
+    external_id: Mapped[str] = mapped_column(String(300))
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="SET NULL")
+    )
+    # As the source names it; `company_id` is set once it is matched to a Company.
+    company_name: Mapped[str] = mapped_column(String(200), default="")
+    title: Mapped[str] = mapped_column(String(500))
+    url: Mapped[str] = mapped_column(String(2000))
+    location_raw: Mapped[str] = mapped_column(String(500), default="")
+    raw_text: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    content_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # Set when the listing disappears from its feed; cleared if it comes back.
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    company: Mapped[Company | None] = relationship()
+
+
+class JobAnalysis(Base):
+    """What was extracted from one version of a listing, and how it was judged.
+
+    Extraction (an LLM call) is keyed by the content hash, so it runs once per
+    version of a listing. The verdict and score are pure code, stamped with
+    `rules_version`: changing a rule or a weight re-judges every job with no
+    LLM calls.
+    """
+
+    __tablename__ = "job_analyses"
+    __table_args__ = (
+        UniqueConstraint("job_id", "content_hash", name="uq_job_analyses_job_id_content_hash"),
+        _one_of("verdict", VERDICTS, nullable=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    # The validated extraction as JSON; NULL when extraction failed (see extraction_error).
+    extraction: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    extractor_version: Mapped[str] = mapped_column(String(50))
+    extraction_error: Mapped[str | None] = mapped_column(Text)
+    rules_version: Mapped[str | None] = mapped_column(String(50))
+    verdict: Mapped[str | None] = mapped_column(String(20))  # NULL until judged
+    # [{rule, outcome, detail, evidence}]: each rule that fired, with the sentence behind it.
+    reasons: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    score: Mapped[float | None] = mapped_column(Numeric(6, 4, asdecimal=False))
+    # {component: {value, weight, contribution}}, so the UI can explain the rank.
+    score_components: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), deferred=True)
+    created_at: Mapped[datetime] = _created_at()
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    job: Mapped[Job] = relationship()
+
+
+class Draft(Base):
+    """A message the candidate may send. Created as needs_review; Recall never sends it.
+
+    A database trigger (migration 0009) refuses an outreach_email unless the
+    job's company has contact_policy = 'allowed', backing up the same check in code.
+    """
+
+    __tablename__ = "drafts"
+    __table_args__ = (
+        _one_of("kind", DRAFT_KINDS),
+        _one_of("status", DRAFT_STATUSES),
+        CheckConstraint("attempts >= 1", name="attempts"),
+        Index("ix_drafts_job_id", "job_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(30))
+    resume_variant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("resume_variants.id", ondelete="SET NULL")
+    )
+    resume_reason: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="needs_review")
+    # {passed, unsupported: [{claim, kind}]}
+    claims_check: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+    job: Mapped[Job] = relationship()
+
+
+class Application(Base):
+    """Progress on one job. Allowed transitions live in app/jobs/applications.py."""
+
+    __tablename__ = "applications"
+    __table_args__ = (
+        _one_of("status", APPLICATION_STATUSES),
+        Index("ix_applications_follow_up_on", "follow_up_on"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="new")
+    follow_up_on: Mapped[date | None] = mapped_column(Date)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = _created_at()
+    status_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    job: Mapped[Job] = relationship()
+    events: Mapped[list["ApplicationEvent"]] = relationship(
+        back_populates="application",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ApplicationEvent.id",
+    )
+
+
+class ApplicationEvent(Base):
+    """Audit log: one row per status change, so the whole history has timestamps."""
+
+    __tablename__ = "application_events"
+    __table_args__ = (Index("ix_application_events_application_id", "application_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE")
+    )
+    from_status: Mapped[str | None] = mapped_column(String(20))
+    to_status: Mapped[str] = mapped_column(String(20))
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    application: Mapped[Application] = relationship(back_populates="events")
+
+
+class IngestionRun(Base):
+    """One daily (or manual) pipeline run. Always ends in a terminal status.
+
+    At most one run can be `running` (partial unique index), so a retried cron
+    call cannot start a duplicate run.
+    """
+
+    __tablename__ = "ingestion_runs"
+    __table_args__ = (
+        _one_of("trigger", RUN_TRIGGERS),
+        _one_of("status", RUN_STATUSES),
+        Index(
+            "uq_ingestion_runs_one_running",
+            "status",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+        ),
+        Index("ix_ingestion_runs_started_at", "started_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    trigger: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(20), default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # {source: {fetched, new, updated, unchanged, closed, errors}}
+    counts: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # [{source, error_type, message}]: messages never contain profile data.
+    errors: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
     )
