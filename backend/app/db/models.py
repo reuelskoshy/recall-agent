@@ -514,6 +514,8 @@ class JobAnalysis(Base):
     extraction: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     extractor_version: Mapped[str] = mapped_column(String(50))
     extraction_error: Mapped[str | None] = mapped_column(Text)
+    # Failed extractions of this version; the pipeline gives up after JOBS_EXTRACT_MAX_ATTEMPTS.
+    extraction_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     rules_version: Mapped[str | None] = mapped_column(String(50))
     verdict: Mapped[str | None] = mapped_column(String(20))  # NULL until judged
     # [{rule, outcome, detail, evidence}]: each rule that fired, with the sentence behind it.

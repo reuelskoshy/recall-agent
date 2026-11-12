@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.db.models import Company, IngestionRun, Job
+from app.jobs.analyse import analyse_jobs
 from app.jobs.dedup import upsert_listing
 from app.jobs.robots import RobotsChecker
 from app.jobs.sources.ashby import AshbyBoard
@@ -39,6 +40,7 @@ from app.jobs.sources.greenhouse import GreenhouseBoard
 from app.jobs.sources.hn import HnWhoIsHiring
 from app.jobs.sources.lever import LeverBoard
 from app.jobs.sources.web_search import WebSearchFeed
+from app.llm.base import LLMProvider
 from app.web.fetch import USER_AGENT
 from app.web.search import SearchProvider, build_search_provider, web_search_enabled
 from app.web.ssrf import SafeTransport
@@ -75,15 +77,20 @@ async def run_ingestion(
     transport: httpx.AsyncBaseTransport | None = None,
     robots_transport: httpx.AsyncBaseTransport | None = None,
     search: SearchProvider | None = None,
+    llm: LLMProvider | None = None,
     sleep: Sleep = asyncio.sleep,
 ) -> RunSummary:
-    """Start a run, process every feed, and record the outcome. Raises only
-    RunAlreadyRunningError (before anything is fetched).
+    """Start a run: fetch every feed, then analyse (extract with `llm`, judge in code),
+    and record the outcome. Raises only RunAlreadyRunningError (before anything is
+    fetched).
 
+    Both stages share one deadline (JOBS_RUN_TIMEOUT_S). Without `llm`, new
+    listings are not extracted, but existing extractions are still re-judged.
     `feeds`, the transports, `search` and `sleep` are injectable for tests;
     by default feeds come from the watchlist and settings.
     """
     run_id = await _start_run(session_factory, trigger)
+    deadline = asyncio.get_running_loop().time() + settings.jobs_run_timeout_s
     counts: defaultdict[str, Counter[str]] = defaultdict(Counter)
     errors: list[dict[str, str]] = []
     status = "failed"
@@ -107,9 +114,13 @@ async def run_ingestion(
                     session_factory, settings, RobotsChecker(robots_client), search
                 )
             succeeded = await _run_feeds(
-                feeds, client, policy, session_factory, settings, counts, errors
+                feeds, client, policy, session_factory, settings, counts, errors, deadline
             )
-        status = "completed" if not errors else "partial" if succeeded else "failed"
+        analysed = await _analyse(session_factory, settings, llm, counts, errors, deadline)
+        if not errors:
+            status = "completed"
+        else:
+            status = "partial" if succeeded or (analysed and not feeds) else "failed"
     except asyncio.CancelledError:
         status = "interrupted"
         errors.append(_error("run", "run", "CancelledError", "the server stopped mid-run"))
@@ -174,6 +185,7 @@ async def _run_feeds(
     settings: Settings,
     counts: defaultdict[str, Counter[str]],
     errors: list[dict[str, str]],
+    deadline: float,
 ) -> int:
     """Process feeds with bounded concurrency under the run deadline; return how many
     succeeded. Each feed's failure is recorded, never raised."""
@@ -201,7 +213,7 @@ async def _run_feeds(
 
     tasks = [asyncio.create_task(one(feed)) for feed in feeds]
     try:
-        async with asyncio.timeout(settings.jobs_run_timeout_s):
+        async with asyncio.timeout_at(deadline):
             await asyncio.gather(*tasks)
     except TimeoutError:
         for task in tasks:
@@ -218,6 +230,36 @@ async def _run_feeds(
             )
         )
     return succeeded
+
+
+async def _analyse(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    llm: LLMProvider | None,
+    counts: defaultdict[str, Counter[str]],
+    errors: list[dict[str, str]],
+    deadline: float,
+) -> bool:
+    """The analysis stage under what is left of the run deadline. True if it finished.
+
+    Listings already extracted stay extracted when the deadline hits; the rest
+    are picked up by the next run.
+    """
+    try:
+        async with asyncio.timeout_at(deadline):
+            outcome = await analyse_jobs(session_factory, settings, llm)
+    except TimeoutError:
+        message = "run deadline reached during analysis; the rest waits for the next run"
+        errors.append(_error("analysis", "analysis", "TimeoutError", message))
+        return False
+    except Exception as exc:  # e.g. the database dropped: record, never crash the run
+        logger.error("Analysis stage failed: %s", type(exc).__name__)
+        errors.append(_error("analysis", "analysis", type(exc).__name__, "unexpected error"))
+        return False
+    counts["analysis"].update(outcome.counts)
+    if outcome.llm_unavailable:
+        errors.append(_error("analysis", "analysis", "LLMUnavailable", outcome.llm_unavailable))
+    return True
 
 
 async def _process_feed(

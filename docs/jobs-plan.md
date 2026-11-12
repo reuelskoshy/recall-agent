@@ -1,8 +1,8 @@
 # Recall Jobs: Phase 0 plan
 
 Status: **approved 2026-11-11** (all five recommendations in section 5).
-Phase 1 (schema) done. Phase 2 (source connectors) done: see "Phase 2
-notes" at the end. Everything under "How Recall works today" was read from
+Phase 1 (schema) done. Phase 2 (source connectors) and Phase 3 (extraction
+and eligibility) done: see the phase notes at the end. Everything under "How Recall works today" was read from
 the code at commit `38dfd46`, not assumed.
 
 ---
@@ -392,3 +392,60 @@ denylist (before any request) and then robots.txt (`urllib.robotparser`,
 fetched through the SSRF-safe transport, fail closed). The reaper marks
 orphaned runs `interrupted`. Fixtures in `backend/tests/fixtures/jobs/` were
 recorded from the live APIs and trimmed.
+
+---
+
+## Phase 3 notes: extraction and eligibility (2026-11-12)
+
+The candidate is looking for jobs **in India**, so location matching is
+country-aware.
+
+**Extraction** (`app/jobs/extraction.py`, `schemas.py`) runs one LLM call per
+listing *version*: there is one `job_analyses` row per (job, content hash), so
+an unchanged listing is never sent to the model again.
+- Each run takes the newest open jobs, at most `JOBS_EXTRACT_MAX_PER_RUN`, with
+  `JOBS_EXTRACT_CONCURRENCY` at a time and each under `JOBS_EXTRACT_TIMEOUT_S`.
+- The prompt covers Indian listing conventions: LPA, lakhs and crore salaries,
+  "2025 batch" and "passouts" graduation years, and "freshers" for no experience.
+- Parsing is lenient. The schema turns odd values into safe defaults, so one
+  bad field never discards the whole extraction.
+- The model also decides `is_job_listing`. In live testing, HN "Who is hiring"
+  threads contained job seekers' posts, which were otherwise judged "eligible".
+
+**Failure handling.**
+- Unparseable output, a timeout, a non-transient LLM error, or any other
+  per-listing exception counts one attempt (`extraction_attempts`, migration
+  0010). After `JOBS_EXTRACT_MAX_ATTEMPTS` the listing stays at verdict `error`.
+- A *transient* LLM failure (an outage, or the circuit breaker is open) counts
+  no attempt and stops new extractions for the run. The rest are deferred, and
+  the run is recorded `partial` with an `LLMUnavailable` error.
+- Fetching and analysis share the run deadline.
+
+**Rules** (`app/jobs/rules.py`) are pure functions, run against every open job
+on every run with no LLM calls, so profile edits apply at once. Each stores
+its rule, outcome, detail and the listing's own sentence.
+
+| Rule | Outcome |
+|---|---|
+| Not a job listing | reject |
+| Required graduation year later than yours | reject (an earlier year only flags) |
+| Role family not in your role types | reject |
+| Location outside your allowed list | reject. A remote job passes if its region includes an allowed country (India matches APAC and Asia), or if it has no restriction |
+| No location given | flag |
+| Minimum experience above yours | flag, with the size of the gap |
+| Internship with no graduation-year requirement | flag |
+| Senior duties on a junior title (SDE-1, trainee, fresher...) | flag |
+| Profile field empty | not checked |
+
+**Evidence is verified.** A rule may only *reject* if the model's quote is
+actually in the listing (the comparison ignores case, whitespace and smart
+punctuation). If the quote is missing or invented, the rule only *flags*, so
+a hallucination can never silently drop a job.
+
+**Live check** (K2-Horizon, 7 India-related posts from the November 2026 HN
+thread):
+- 1–32 s per listing.
+- Two job-seeker posts were rejected with verified quotes. A third was flagged
+  because its quote did not match the text.
+- A US-only role was rejected on location.
+- Two remote roles open to India were judged eligible.

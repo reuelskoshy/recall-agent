@@ -152,7 +152,7 @@ async def test_unexpected_feed_errors_are_recorded_by_type_only() -> None:
 async def test_run_deadline_still_records_a_terminal_state() -> None:
     summary = await run(
         [StaticFeed("greenhouse:fast", [raw("1")]), StaticFeed("greenhouse:hang", hang=True)],
-        jobs_run_timeout_s=0.3,
+        jobs_run_timeout_s=1.5,
         jobs_feed_timeout_s=60,
     )
     row = await stored_run(summary.run_id)

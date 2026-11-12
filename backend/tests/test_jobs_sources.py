@@ -208,6 +208,9 @@ async def test_hn_keyword_filter_and_company_from_the_first_line() -> None:
         HnWhoIsHiring(keywords=["BENGALURU"]), hn_handler(threads=threads, comments=comments)
     )
     assert [(x.external_id, x.company_name) for x in result.listings] == [("11", "Acme")]
+    # HN's bare <p> separators start new lines, so the title is only the first line.
+    lines = html_to_text("Other | SRE | Berlin<p>Onsite<p>Python").splitlines()
+    assert lines == ["Other | SRE | Berlin", "Onsite", "Python"]
     assert result.skipped == 1
 
 

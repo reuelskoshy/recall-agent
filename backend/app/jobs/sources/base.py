@@ -12,6 +12,7 @@ body fails at once: retrying would return the same answer.
 
 import asyncio
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -26,6 +27,9 @@ from app.jobs.dedup import RawListing
 from app.web.fetch import BLOCK_END, normalize_lines
 
 logger = logging.getLogger(__name__)
+
+BLOCK_START = re.compile(r"(?i)(<(?:p|li|h[1-6]|div|tr)(?:\s[^>]*)?>)")
+"""Opening block tags: HN separates paragraphs with a bare <p> that is never closed."""
 
 RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 MAX_RETRY_AFTER_S = 30.0
@@ -139,7 +143,8 @@ class BoardFeed(Feed):
 
 def html_to_text(html: str) -> str:
     """Readable text from a posting's HTML: paragraphs and list items on their own lines."""
-    marked = BLOCK_END.sub(r"\1\n", unescape(html) if "&lt;" in html else html)
+    decoded = unescape(html) if "&lt;" in html else html
+    marked = BLOCK_START.sub(r"\n\1", BLOCK_END.sub(r"\1\n", decoded))
     body = LexborHTMLParser(f"<body>{marked}</body>").body
     return normalize_lines(body.text(separator="") if body else "")
 

@@ -239,6 +239,16 @@ class Settings(BaseSettings):
         description="Web searches for listings (uses WEB_SEARCH_*). JSON list. Never logged.",
     )
     jobs_search_max_results: int = Field(default=10, ge=1, le=20)
+    jobs_extract_max_per_run: int = Field(
+        default=50, ge=0, description="New listings sent to the LLM per run (bounds the bill)."
+    )
+    jobs_extract_concurrency: int = Field(default=3, ge=1, le=10)
+    jobs_extract_timeout_s: float = Field(
+        default=120.0, gt=0, description="Per listing (reasoning models are slow)."
+    )
+    jobs_extract_max_attempts: int = Field(
+        default=3, ge=1, description="Give up on a listing the model fails to parse this often."
+    )
     jobs_denied_domains: list[str] = Field(
         default_factory=list,
         description="Extra domains never used (LinkedIn is always denied). JSON list.",
