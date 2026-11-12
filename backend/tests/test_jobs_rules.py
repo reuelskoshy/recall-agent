@@ -386,6 +386,27 @@ def test_flags_an_experience_gap_with_its_size() -> None:
     assert r.evidence == "You need 2+ years of experience with Python."
 
 
+def test_a_large_experience_gap_rejects_only_with_a_verified_quote() -> None:
+    text = listing(text="We want 8+ years of backend experience. Bengaluru, India.")
+    verified = job(
+        locations=[{"city": "Bengaluru"}],
+        min_years_experience=8,
+        evidence={"min_years_experience": "8+ years of backend experience"},
+    )
+    verdict, reasons = run(verified, text=text)
+    r = reason(reasons, "experience")
+    assert verdict == "rejected" and r.outcome == "reject" and "gap of 7.5" in r.detail
+    assert r.evidence == "We want 8+ years of backend experience."
+
+    invented = job(min_years_experience=8, evidence={"min_years_experience": "ten years at least"})
+    r = reason(run(invented, text=text)[1], "experience")
+    assert r.outcome == "flag" and "not found" in r.detail
+
+    # Exactly the limit is still a flag (0.5 years + 3 = 3.5).
+    at_limit = job(min_years_experience=3.5, evidence={"min_years_experience": "8+ years"})
+    assert reason(run(at_limit, text=text)[1], "experience").outcome == "flag"
+
+
 def test_freshers_and_matching_experience_pass() -> None:
     assert reason(run(job(min_years_experience=0))[1], "experience").outcome == "pass"
     assert reason(run(job())[1], "experience").outcome == "pass"

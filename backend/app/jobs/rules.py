@@ -23,7 +23,9 @@ from app.db.models import CandidateProfile
 from app.jobs.locations import judge_location, sponsorship_place
 from app.jobs.schemas import ExtractedJob, Reason, Verdict
 
-RULES_VERSION = "rules-2026-11-12b"  # + visa sponsorship
+RULES_VERSION = "rules-2026-11-12c"  # + large experience gaps reject
+# A gap above this many years rejects (with a verified quote); smaller gaps flag.
+MAX_EXPERIENCE_GAP = 3.0
 UNVERIFIED = " The model's quote was not found in the listing, so this is a flag, not a rejection."
 
 JUNIOR_TITLE = re.compile(
@@ -224,12 +226,11 @@ def experience(job: ExtractedJob, facts: ProfileFacts, listing: Listing) -> Reas
             detail=f"Asks for {needed:g}+ years; you have {mine:g}.",
             evidence=evidence,
         )
-    return Reason(
-        rule=rule,
-        outcome="flag",
-        detail=f"Asks for {needed:g}+ years; you have {mine:g} (gap of {needed - mine:g}).",
-        evidence=evidence,
-    )
+    gap = needed - mine
+    detail = f"Asks for {needed:g}+ years; you have {mine:g} (gap of {gap:g})."
+    if gap > MAX_EXPERIENCE_GAP:
+        return _reject_or_flag(rule, detail, evidence)
+    return Reason(rule=rule, outcome="flag", detail=detail, evidence=evidence)
 
 
 def internship(job: ExtractedJob, facts: ProfileFacts, listing: Listing) -> Reason:
