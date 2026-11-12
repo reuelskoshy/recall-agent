@@ -242,6 +242,11 @@ class Settings(BaseSettings):
     jobs_extract_max_per_run: int = Field(
         default=50, ge=0, description="New listings sent to the LLM per run (bounds the bill)."
     )
+    jobs_prefilter_enabled: bool = Field(
+        default=True,
+        description="Skip, before extraction, listings whose title or raw location the "
+        "rules would certainly reject, and extract senior titles last.",
+    )
     jobs_extract_concurrency: int = Field(default=3, ge=1, le=10)
     jobs_extract_timeout_s: float = Field(
         default=120.0, gt=0, description="Per listing (reasoning models are slow)."

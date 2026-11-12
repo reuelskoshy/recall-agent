@@ -272,6 +272,54 @@ async def test_per_run_cap_takes_the_newest_first() -> None:
     assert sorted(llm.calls) == ["Job 2", "Job 3"]
 
 
+async def add_located_job(title: str, location_raw: str) -> None:
+    async with SessionLocal() as session:
+        await upsert_listing(
+            session,
+            RawListing(
+                source="greenhouse",
+                external_id=title,
+                title=title,
+                url=f"https://example.test/{title}",
+                raw_text="Python role.",
+                location_raw=location_raw,
+            ),
+        )
+        await session.commit()
+
+
+async def test_prefilter_skips_certain_rejections_and_extracts_senior_titles_last() -> None:
+    await set_profile(sponsorship_locations=["United States"])
+    await add_located_job("Account Executive", "Bengaluru")
+    await add_located_job("Backend Engineer, Dublin", "Dublin, Ireland")
+    await add_located_job("Senior Backend Engineer", "Bengaluru")
+    await add_located_job("Backend Engineer", "Bengaluru")
+    await add_located_job("Platform Engineer", "Austin, United States")
+    llm = KeyedLLM(
+        {t: BENGALURU for t in ("Senior Backend Engineer", "Backend Engineer", "Platform Engineer")}
+    )
+
+    outcome = await analyse_jobs(SessionLocal, settings(jobs_extract_max_per_run=2), llm)
+
+    assert outcome.counts["prefiltered_role_family"] == 1
+    assert outcome.counts["prefiltered_location"] == 1
+    assert sorted(llm.calls) == ["Backend Engineer", "Platform Engineer"]  # senior waits
+    # Skipped listings store nothing, so a profile edit brings them back.
+    assert set(await analyses()) == {"Backend Engineer", "Platform Engineer"}
+    await set_profile(allowed_locations=["India", "Ireland"])
+    llm.replies["Backend Engineer, Dublin"] = BENGALURU
+    await analyse_jobs(SessionLocal, settings(), llm)
+    assert "Backend Engineer, Dublin" in llm.calls and "Account Executive" not in llm.calls
+
+
+async def test_prefilter_can_be_switched_off() -> None:
+    await set_profile()
+    await add_located_job("Account Executive", "London, UK")
+    llm = KeyedLLM({"Account Executive": BENGALURU})
+    outcome = await analyse_jobs(SessionLocal, settings(jobs_prefilter_enabled=False), llm)
+    assert llm.calls == ["Account Executive"] and outcome.counts["extracted"] == 1
+
+
 async def test_listings_extracted_by_an_older_prompt_are_extracted_again() -> None:
     await set_profile()
     await add_job("Backend Engineer")

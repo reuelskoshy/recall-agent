@@ -3,7 +3,9 @@
 Extraction:
 - Only open jobs whose *current* content hash has no extraction yet, newest
   first, at most JOBS_EXTRACT_MAX_PER_RUN per run, JOBS_EXTRACT_CONCURRENCY at
-  a time, each under JOBS_EXTRACT_TIMEOUT_S. One analysis row per (job,
+  a time, each under JOBS_EXTRACT_TIMEOUT_S. The prefilter (prefilter.py)
+  first drops listings the rules would certainly reject and puts senior
+  titles last. One analysis row per (job,
   content hash): an unchanged listing is never sent to the LLM again.
 - A listing the model cannot parse, or that times out, counts one attempt;
   after JOBS_EXTRACT_MAX_ATTEMPTS it is left with verdict `error`.
@@ -34,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.db.models import CandidateProfile, Job, JobAnalysis
 from app.jobs.extraction import ExtractionError, extract
+from app.jobs.prefilter import prefilter, priority
 from app.jobs.rules import RULES_VERSION, Listing, ProfileFacts, judge
 from app.jobs.schemas import EXTRACTOR_VERSION, ExtractedJob
 from app.llm.base import LLMError, LLMProvider
@@ -76,11 +79,19 @@ async def analyse_jobs(
 
 
 async def _pending_jobs(
-    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    counts: Counter[str] | None = None,
 ) -> list[_Pending]:
+    """The listings to extract this run, newest first, at most the per-run cap.
+
+    With the prefilter on and a profile present, listings the rules would
+    certainly reject are left out (counted as prefiltered_*), and senior titles
+    go after the rest. Only titles and locations are read until the cut.
+    """
     current = and_(JobAnalysis.job_id == Job.id, JobAnalysis.content_hash == Job.content_hash)
     stmt = (
-        select(Job.id, Job.content_hash, Job.title, Job.location_raw, Job.raw_text)
+        select(Job.id, Job.content_hash, Job.title, Job.location_raw)
         .outerjoin(JobAnalysis, current)
         .where(
             Job.closed_at.is_(None),
@@ -98,11 +109,35 @@ async def _pending_jobs(
             ),
         )
         .order_by(Job.first_seen_at.desc(), Job.id.desc())
-        .limit(settings.jobs_extract_max_per_run)
     )
+    limit = settings.jobs_extract_max_per_run
     async with session_factory() as session:
-        rows = (await session.execute(stmt)).all()
-    return [_Pending(*row) for row in rows]
+        profile = None
+        if settings.jobs_prefilter_enabled:
+            profile = await session.get(CandidateProfile, 1)
+        if profile is None:
+            rows = (await session.execute(stmt.limit(limit))).all()
+        else:
+            facts = ProfileFacts.from_profile(profile)
+            kept = []
+            for row in (await session.execute(stmt)).all():
+                skip = prefilter(row.title, row.location_raw, facts)
+                if skip is None:
+                    kept.append(row)
+                elif counts is not None:
+                    counts[f"prefiltered_{skip.rule}"] += 1
+            # Stable sort: newest first within each priority.
+            rows = sorted(kept, key=lambda r: priority(r.title))[:limit]
+        if not rows:
+            return []
+        texts = dict(
+            (
+                await session.execute(
+                    select(Job.id, Job.raw_text).where(Job.id.in_([r.id for r in rows]))
+                )
+            ).all()
+        )
+    return [_Pending(r.id, r.content_hash, r.title, r.location_raw, texts[r.id]) for r in rows]
 
 
 async def _extract_pending(
@@ -111,8 +146,8 @@ async def _extract_pending(
     llm: LLMProvider,
     outcome: AnalysisOutcome,
 ) -> None:
-    pending = await _pending_jobs(session_factory, settings)
     counts = outcome.counts
+    pending = await _pending_jobs(session_factory, settings, counts)
     counts["to_extract"] += len(pending)
     gate = asyncio.Semaphore(settings.jobs_extract_concurrency)
     stop = asyncio.Event()

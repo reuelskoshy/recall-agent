@@ -11,6 +11,7 @@ groups and cities whose country the model left out. It is focused on India,
 which is where the candidate is looking; other countries match by name.
 """
 
+import re
 from collections.abc import Iterable
 from typing import Literal
 
@@ -110,6 +111,62 @@ _ANYWHERE = frozenset(
 )
 
 _CANONICAL = {alias: name for name, aliases in _ALIASES.items() for alias in aliases}
+
+# Countries the pre-extraction filter recognises in a feed's raw location field.
+# Anything not listed here is "unknown", and unknown places are never skipped.
+_COUNTRIES = frozenset(
+    {
+        INDIA,
+        "united states",
+        "united kingdom",
+        "united arab emirates",
+        "canada",
+        "mexico",
+        "brazil",
+        "argentina",
+        "colombia",
+        "chile",
+        "ireland",
+        "germany",
+        "france",
+        "netherlands",
+        "belgium",
+        "spain",
+        "portugal",
+        "italy",
+        "switzerland",
+        "austria",
+        "sweden",
+        "norway",
+        "denmark",
+        "finland",
+        "poland",
+        "czech republic",
+        "romania",
+        "israel",
+        "saudi arabia",
+        "qatar",
+        "singapore",
+        "malaysia",
+        "indonesia",
+        "philippines",
+        "vietnam",
+        "thailand",
+        "japan",
+        "south korea",
+        "china",
+        "hong kong",
+        "taiwan",
+        "australia",
+        "new zealand",
+        "south africa",
+        "nigeria",
+        "kenya",
+        "egypt",
+    }
+)
+_RAW_SPLIT = re.compile(r"[,;/|()\-\u2013\u2014]+")  # also en and em dashes
+_REMOTE_WORD = re.compile(r"\b(remote|anywhere|worldwide|distributed|wfh)\b", re.IGNORECASE)
 
 
 def canonical(name: str) -> str:
@@ -212,6 +269,39 @@ def sponsorship_place(job: ExtractedJob, places: list[str], remote_ok: bool) -> 
             if canonical(region) in wanted:
                 return f"remote ({region})"
     return None
+
+
+def raw_location_outside(raw: str, wanted: Iterable[str], remote_ok: bool) -> str | None:
+    """For the pre-extraction filter: the known countries a feed's raw location names,
+    when it names at least one and nothing inside `wanted`.
+
+    Returns None ("keep") whenever there is doubt: an empty field, a remote
+    mention (when remote is acceptable), a place in a wanted country, or no
+    recognisable country at all. "London, UK" -> "united kingdom"; "London" -> None.
+    """
+    if not raw.strip():
+        return None
+    if remote_ok and _REMOTE_WORD.search(raw):
+        return None
+    wanted = list(wanted)
+    countries = allowed_countries(wanted)
+    wanted_names = {canonical(w) for w in wanted if w.strip()} | countries
+    found: set[str] = set()
+    for part in _RAW_SPLIT.split(raw):
+        name = canonical(part)
+        if not name:
+            continue
+        if name in wanted_names:
+            return None
+        if name in _INDIAN_CITIES or name in _GROUPS or name in _INDIAN_STATES:
+            if INDIA in countries:
+                return None
+            found.add(INDIA)
+        elif name in _COUNTRIES:
+            found.add(name)
+    if not found or found & countries:
+        return None
+    return ", ".join(sorted(found))
 
 
 def describe(location: Location) -> str:
