@@ -76,7 +76,7 @@ def test_technology_overlap_uses_aliases_and_word_prefixes() -> None:
 
 def test_experience_falls_linearly_to_zero_at_the_reject_threshold() -> None:
     def value(years: float) -> float:
-        return score(job(min_years_experience=years))[1]["experience"]["value"]
+        return float(score(job(min_years_experience=years))[1]["experience"]["value"])
 
     assert value(0) == 1.0
     assert value(1.7) == pytest.approx(0.5)
@@ -101,7 +101,8 @@ def test_salary_only_compares_annual_amounts_in_your_currency() -> None:
     )
 
     def value(salary: dict[str, Any]) -> float | None:
-        return score(job(salary=salary), profile=me)[1]["salary"]["value"]
+        got: float | None = score(job(salary=salary), profile=me)[1]["salary"]["value"]
+        return got
 
     assert value({"min": 1_000_000, "max": 1_500_000, "currency": "INR", "period": "year"}) == 1.0
     assert value({"min": 600_000, "currency": "INR", "period": "year"}) == pytest.approx(0.5)
@@ -111,7 +112,7 @@ def test_salary_only_compares_annual_amounts_in_your_currency() -> None:
 
 def test_freshness_halves_every_half_life() -> None:
     def value(days: float) -> float:
-        return score(job(), age_days=days)[1]["freshness"]["value"]
+        return float(score(job(), age_days=days)[1]["freshness"]["value"])
 
     assert value(0) == 1.0
     assert value(14) == pytest.approx(0.5)
@@ -120,7 +121,7 @@ def test_freshness_halves_every_half_life() -> None:
 
 def test_similarity_is_mapped_from_floor_to_ceiling() -> None:
     def value(sim: float) -> float:
-        return score(job(), similarity=sim)[1]["semantic"]["value"]
+        return float(score(job(), similarity=sim)[1]["semantic"]["value"])
 
     assert value(0.50) == 0.0
     assert value(0.675) == pytest.approx(0.5)
