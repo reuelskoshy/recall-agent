@@ -13,11 +13,12 @@ import logging
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import func, update
+from sqlalchemy import func, literal, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
-from app.db.models import AgentRun, Document
+from app.db.models import AgentRun, Document, IngestionRun
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,12 @@ GRACE_S = 60.0
 
 RUN_INTERRUPTED = "The server stopped before this run finished."
 INGEST_INTERRUPTED = "Ingestion was interrupted (the server restarted). Retry it."
+JOB_RUN_INTERRUPTED = {
+    "feed": "run",
+    "source": "run",
+    "error_type": "Interrupted",
+    "message": "the server stopped before this run finished",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +41,7 @@ class ReapResult:
 
     runs: int
     documents: int
+    job_runs: int = 0
 
 
 async def reap_orphans(
@@ -57,11 +65,27 @@ async def reap_orphans(
             .returning(Document.id)
         )
         document_ids = documents.all()
+        # Job-search ingestion runs: always reaped (cheap), whether or not jobs are enabled.
+        job_cutoff = func.now() - timedelta(seconds=settings.jobs_run_timeout_s + GRACE_S)
+        job_runs = await session.scalars(
+            update(IngestionRun)
+            .where(IngestionRun.status == "running", IngestionRun.started_at < job_cutoff)
+            .values(
+                status="interrupted",
+                finished_at=func.now(),
+                errors=IngestionRun.errors.op("||")(literal([JOB_RUN_INTERRUPTED], JSONB)),
+            )
+            .returning(IngestionRun.id)
+        )
+        job_run_ids = job_runs.all()
         await session.commit()
-    result = ReapResult(runs=len(run_ids), documents=len(document_ids))
-    if result.runs or result.documents:
+    result = ReapResult(runs=len(run_ids), documents=len(document_ids), job_runs=len(job_run_ids))
+    if result.runs or result.documents or result.job_runs:
         logger.warning(
-            "Reaper failed %d orphaned run(s) and %d ingestion(s)", result.runs, result.documents
+            "Reaper failed %d orphaned run(s), %d ingestion(s) and %d job run(s)",
+            result.runs,
+            result.documents,
+            result.job_runs,
         )
     return result
 

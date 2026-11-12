@@ -212,6 +212,38 @@ class Settings(BaseSettings):
         "(0 = never).",
     )
 
+    # ---- Recall Jobs (docs/jobs-plan.md) ----
+    jobs_enabled: bool = Field(
+        default=False,
+        description="The private job-search pipeline. Keep false on the public demo.",
+    )
+    jobs_run_timeout_s: float = Field(
+        default=900.0, gt=0, description="Hard deadline for one ingestion run."
+    )
+    jobs_feed_timeout_s: float = Field(
+        default=60.0, gt=0, description="Deadline for one feed (one board, thread or query)."
+    )
+    jobs_http_timeout_s: float = Field(default=15.0, gt=0, description="Per source request.")
+    jobs_http_max_attempts: int = Field(
+        default=3, ge=1, le=5, description="Tries per request on transient errors only."
+    )
+    jobs_feed_concurrency: int = Field(default=4, ge=1, le=16)
+    jobs_hn_enabled: bool = Field(default=True, description="Read HN 'Who is hiring?'.")
+    jobs_hn_keywords: list[str] = Field(
+        default_factory=list,
+        description="Keep only HN posts containing one of these (case-insensitive); "
+        'empty keeps all. JSON list, e.g. ["bengaluru", "remote"].',
+    )
+    jobs_search_queries: list[str] = Field(
+        default_factory=list,
+        description="Web searches for listings (uses WEB_SEARCH_*). JSON list. Never logged.",
+    )
+    jobs_search_max_results: int = Field(default=10, ge=1, le=20)
+    jobs_denied_domains: list[str] = Field(
+        default_factory=list,
+        description="Extra domains never used (LinkedIn is always denied). JSON list.",
+    )
+
     # ---- Long-term memory ----
     # score = w_sim * similarity + w_rec * recency + w_imp * importance, each term in [0, 1].
     memory_weight_similarity: float = Field(default=0.7, ge=0)

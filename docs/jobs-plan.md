@@ -1,7 +1,8 @@
 # Recall Jobs: Phase 0 plan
 
 Status: **approved 2026-11-11** (all five recommendations in section 5).
-Phase 1 (schema) done. Everything under "How Recall works today" was read from
+Phase 1 (schema) done. Phase 2 (source connectors) done: see "Phase 2
+notes" at the end. Everything under "How Recall works today" was read from
 the code at commit `38dfd46`, not assumed.
 
 ---
@@ -361,3 +362,33 @@ I'll ask before adding any.
    `app/memory/extraction.py` as part of this work?
 
 Once these are settled, Phase 1 starts with a short plan and the file list.
+
+---
+
+## Phase 2 notes: source connectors (2026-11-12)
+
+Provider documentation and terms were read live on 2026-11-12, and each
+endpoint was probed. Findings that differ from the docs or from assumptions:
+
+| Source | Endpoint | Notes |
+|---|---|---|
+| Greenhouse | `boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true` | No auth for GET. `content` is HTML-entity-encoded. Pay ranges only on the single-job endpoint (salary comes from text in Phase 3). Unknown board: 404 |
+| Lever | `api.lever.co/v0/postings/{site}?mode=json` | EU accounts use `api.eu.lever.co`: write the token as `eu:{site}`. `createdAt` (epoch ms) is in live responses but not the README. robots.txt asks for `Crawl-delay: 1`; we make one request per board per day |
+| Ashby | `api.ashbyhq.com/posting-api/job-board/{name}` | `jobs[].id` is in live responses but not the docs (falls back to the `jobUrl` path). `isListed: false` postings are skipped. Unknown board: 404 with a plain-text body |
+| HN | `hn.algolia.com/api/v1/search_by_date`, `/search` | Documented limit: 10,000 requests/hour per IP. `whoishiring` also posts "Who wants to be hired?", so the thread is chosen by title. `hitsPerPage` is capped at 1000 |
+| Search | Tavily via `app/web/search.py` | Terms and AUP allow it; the AUP's employment clause targets screening candidates, not a candidate searching listings |
+
+None of the three ATS APIs documents rate limits or usage terms for GET.
+
+**Design.** A feed (one board, the HN thread, one query) is the unit of
+isolation: each has its own deadline, and its failure is one entry in
+`ingestion_runs.errors`. HTTP retries cover transient failures only
+(connection errors, timeouts, 429, 5xx), with at most `JOBS_HTTP_MAX_ATTEMPTS`
+attempts, exponential backoff and `Retry-After` capped at 30 s. 4xx and
+malformed bodies fail at once. Board feeds are complete, so postings that
+disappear get `closed_at` (and reopen if they come back). HN and search are
+not complete, so nothing is closed from them. Search hits pass the domain
+denylist (before any request) and then robots.txt (`urllib.robotparser`,
+fetched through the SSRF-safe transport, fail closed). The reaper marks
+orphaned runs `interrupted`. Fixtures in `backend/tests/fixtures/jobs/` were
+recorded from the live APIs and trimmed.
