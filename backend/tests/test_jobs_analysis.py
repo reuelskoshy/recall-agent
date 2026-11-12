@@ -27,6 +27,7 @@ from app.llm.base import (
     TextDelta,
     ToolSpec,
 )
+from app.rag.embeddings import FakeEmbedder
 from tests.test_jobs_ingest import StaticFeed
 
 pytestmark = pytest.mark.usefixtures("db")
@@ -310,6 +311,83 @@ async def test_prefilter_skips_certain_rejections_and_extracts_senior_titles_las
     llm.replies["Backend Engineer, Dublin"] = BENGALURU
     await analyse_jobs(SessionLocal, settings(), llm)
     assert "Backend Engineer, Dublin" in llm.calls and "Account Executive" not in llm.calls
+
+
+class CountingEmbedder(FakeEmbedder):
+    """FakeEmbedder that records how many texts it embedded, or fails on demand."""
+
+    def __init__(self, fail: bool = False) -> None:
+        super().__init__()
+        self.texts: list[str] = []
+        self.fail = fail
+
+    async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        if self.fail:
+            raise RuntimeError("model failed to load")
+        self.texts.extend(texts)
+        return await super().embed_documents(texts)
+
+
+async def test_eligible_and_flagged_jobs_are_scored_with_components() -> None:
+    await set_profile(sponsorship_locations=["United States"])
+    await add_job("Backend Engineer")
+    await add_job("Platform Engineer", "Python. Join us in Austin, Texas.")  # flagged: no visa info
+    await add_job("Data Engineer", "Sell our product to banks. Bengaluru.")
+    llm = KeyedLLM(
+        {
+            "Backend Engineer": BENGALURU,
+            "Platform Engineer": AUSTIN,
+            "Data Engineer": {
+                **BENGALURU,
+                "role_family": "other",
+                "evidence": {"role_family": "Sell our product to banks"},
+            },
+        }
+    )
+    embedder = CountingEmbedder()
+
+    outcome = await analyse_jobs(SessionLocal, settings(), llm, embedder)
+
+    rows = await analyses()
+    good, abroad, sales = rows["Backend Engineer"], rows["Platform Engineer"], rows["Data Engineer"]
+    assert (good.verdict, abroad.verdict) == ("eligible", "flagged")
+    assert sales.verdict == "rejected" and sales.score is None  # rejected jobs are not scored
+    assert outcome.counts["scored"] == 2 and outcome.counts["embedded"] == 2
+    assert good.score is not None and abroad.score is not None and good.score > abroad.score
+    assert good.score_components is not None
+    assert good.score_components["location"]["value"] == 1.0
+    assert abroad.score_components is not None
+    assert abroad.score_components["location"]["value"] == 0.5
+    assert good.score_components["semantic"]["value"] is not None
+
+
+async def test_listings_are_embedded_once_and_rejected_jobs_lose_their_score() -> None:
+    await set_profile()
+    await add_job("Backend Engineer")
+    llm = KeyedLLM({"Backend Engineer": BENGALURU})
+    embedder = CountingEmbedder()
+    await analyse_jobs(SessionLocal, settings(), llm, embedder)
+    await analyse_jobs(SessionLocal, settings(), llm, embedder)
+    profile_texts = [t for t in embedder.texts if SENTINEL in t]
+    assert len(embedder.texts) - len(profile_texts) == 1  # the listing, once
+    assert (await analyses())["Backend Engineer"].score is not None
+
+    await set_profile(allowed_locations=["United States"])  # now rejected on location
+    outcome = await analyse_jobs(SessionLocal, settings(), None, embedder)
+    row = (await analyses())["Backend Engineer"]
+    assert row.verdict == "rejected" and row.score is None and row.score_components is None
+    assert outcome.counts["score_cleared"] == 1
+
+
+async def test_a_failing_embedder_still_scores_without_the_semantic_part() -> None:
+    await set_profile()
+    await add_job("Backend Engineer")
+    llm = KeyedLLM({"Backend Engineer": BENGALURU})
+    outcome = await analyse_jobs(SessionLocal, settings(), llm, CountingEmbedder(fail=True))
+    row = (await analyses())["Backend Engineer"]
+    assert outcome.counts["embedding_failed"] >= 1 and outcome.counts["scored"] == 1
+    assert row.score is not None and row.score_components is not None
+    assert row.score_components["semantic"]["value"] is None
 
 
 async def test_prefilter_can_be_switched_off() -> None:

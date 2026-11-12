@@ -463,3 +463,43 @@ HN posts that mention visas:
   because those places are not in the list.
 - One reply in six was not valid JSON: that counts as one attempt and is
   retried on the next run.
+
+## Phase 4 notes: scoring and ranking (2026-11-12)
+
+Every open job judged **eligible** or **flagged** gets a score in [0, 1]
+(`app/jobs/scoring.py`). Rejected jobs have no score; a job that becomes
+rejected loses it. Scoring runs on every analysis pass, after judging, with no
+LLM calls.
+
+`score = Σ wᵢ·vᵢ / Σ wᵢ` over the components that can be measured:
+
+| Component | Value | Default weight | Why this weight |
+|---|---|---|---|
+| semantic | cosine(listing, profile) embeddings, mapped from [0.55, 0.80] to [0, 1] | 0.30 | Fit, the fuzzy view |
+| technology | (matched + 1) / (listed + 2), against profile skills and the technologies of jobs and projects | 0.25 | Fit, the exact view; smoothing stops "SQL, Python" scoring 1.0 |
+| experience | 1 when you meet the minimum, linear to 0 at a 3-year gap | 0.20 | The main barrier for an early-career candidate |
+| freshness | 0.5 ^ (age / 14 days), from the posting date or first seen | 0.10 | Early applications do better, but fit matters more |
+| location | 1 in an allowed place or allowed remote, 0.5 in a sponsorship-only place | 0.10 | The rules already removed disallowed places |
+| salary | min(1, top of range / your minimum), annual and same currency only | 0.05 | Most Indian listings give no salary |
+
+**Missing data is neutral.** A component that cannot be measured (no salary,
+no technologies, no stated minimum, a failed embedding) is left out and the
+other weights are rescaled. Each stored component has `value`, the effective
+`weight`, `contribution` and a `detail` sentence, so the UI can explain a rank.
+All weights, the half-life and the similarity range are `JOBS_SCORE_*` settings.
+
+**Embeddings.** Each listing version is embedded once (bge-small, stored on
+`job_analyses.embedding`). The profile is re-embedded every run, since it can
+change at any time. If the model fails, jobs are still scored, without the
+semantic component, and `embedding_failed` is counted.
+
+**Calibration.** The similarity range comes from 100 live listings against the
+real profile: cosines ran from 0.54 (key account management) to 0.78 (SDE2, API
+Platform), median 0.64.
+
+**Known limits.**
+- `technologies` mixes required and nice-to-have tools, since the extractor does
+  not separate them. Splitting them would need a prompt change and re-extraction.
+- Board posting dates can be months old for listings that are still open, so
+  freshness can bury an old but good fit. Lower `JOBS_SCORE_W_FRESHNESS` if
+  that happens too often.

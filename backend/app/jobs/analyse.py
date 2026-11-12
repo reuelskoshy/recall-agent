@@ -25,8 +25,10 @@ profile text.
 
 import asyncio
 import logging
+import uuid
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
@@ -34,12 +36,21 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
-from app.db.models import CandidateProfile, Job, JobAnalysis
+from app.db.models import CandidateProfile, Job, JobAnalysis, ProfileEntry, ProfileSkill
 from app.jobs.extraction import ExtractionError, extract
 from app.jobs.prefilter import prefilter, priority
 from app.jobs.rules import RULES_VERSION, Listing, ProfileFacts, judge
 from app.jobs.schemas import EXTRACTOR_VERSION, ExtractedJob
+from app.jobs.scoring import (
+    ScoreWeights,
+    ScoringProfile,
+    cosine,
+    job_text,
+    profile_text,
+    score_job,
+)
 from app.llm.base import LLMError, LLMProvider
+from app.rag.embeddings import EmbeddingProvider, Vector
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +75,17 @@ async def analyse_jobs(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     llm: LLMProvider | None,
+    embedder: EmbeddingProvider | None = None,
 ) -> AnalysisOutcome:
-    """Extract (if an LLM is given), then judge. Never raises except on cancellation
-    or a database error, which the caller records."""
+    """Extract (if an LLM is given), judge, then score. Never raises except on
+    cancellation or a database error, which the caller records. Without an
+    embedder, scores are computed without the semantic component."""
     counts: Counter[str] = Counter()
     outcome = AnalysisOutcome(counts=counts)
     if llm is not None:
         await _extract_pending(session_factory, settings, llm, outcome)
     await judge_open_jobs(session_factory, counts)
+    await score_open_jobs(session_factory, settings, embedder, counts)
     return outcome
 
 
@@ -295,3 +309,148 @@ async def judge_open_jobs(
             )
             counts["rejudged"] += 1
         await session.commit()
+
+
+# ---- Scoring ----------------------------------------------------------------------------
+
+SCORED_VERDICTS = ("eligible", "flagged")
+EMBED_BATCH = 32
+
+
+async def score_open_jobs(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    embedder: EmbeddingProvider | None,
+    counts: Counter[str],
+) -> None:
+    """Score every open eligible or flagged job; clear the score of the rest.
+
+    Each listing version is embedded once (stored on its analysis row); the
+    profile is embedded on every run, since it can change at any time. If
+    embedding fails, the jobs are still scored, without the semantic part.
+    Rows are only written when the score or its components changed.
+    """
+    async with session_factory() as session:
+        profile = await session.get(CandidateProfile, 1)
+        if profile is None:
+            return
+        skills = list((await session.scalars(select(ProfileSkill.name))).all())
+        entry_techs = (await session.scalars(select(func.unnest(ProfileEntry.technologies)))).all()
+        scoring_profile = ScoringProfile.from_profile(profile, [*skills, *entry_techs])
+        weights = ScoreWeights.from_settings(settings)
+        profile_vector = await _embed_profile(session, profile, embedder, skills, counts)
+
+        current = and_(JobAnalysis.job_id == Job.id, JobAnalysis.content_hash == Job.content_hash)
+        rows = (
+            await session.execute(
+                select(
+                    JobAnalysis.id,
+                    JobAnalysis.extraction,
+                    JobAnalysis.embedding,
+                    JobAnalysis.score,
+                    JobAnalysis.score_components,
+                    Job.title,
+                    Job.raw_text,
+                    func.coalesce(Job.posted_at, Job.first_seen_at).label("seen_at"),
+                )
+                .join(Job, current)
+                .where(Job.closed_at.is_(None), JobAnalysis.verdict.in_(SCORED_VERDICTS))
+            )
+        ).all()
+
+        parsed: dict[uuid.UUID, ExtractedJob] = {}
+        for row in rows:
+            try:
+                parsed[row.id] = ExtractedJob.model_validate(row.extraction)
+            except ValueError:
+                counts["unreadable_extraction"] += 1
+        vectors: dict[uuid.UUID, Vector] = {
+            row.id: list(row.embedding) for row in rows if row.embedding is not None
+        }
+        missing = [row for row in rows if row.id in parsed and row.id not in vectors]
+        if embedder is not None and missing:
+            vectors.update(await _embed_jobs(session, embedder, missing, parsed, counts))
+
+        now = datetime.now(UTC)
+        for row in rows:
+            job = parsed.get(row.id)
+            if job is None:
+                continue
+            vector = vectors.get(row.id)
+            similarity = (
+                cosine(profile_vector, vector)
+                if profile_vector is not None and vector is not None
+                else None
+            )
+            score, components = score_job(
+                job, scoring_profile, weights, similarity=similarity, seen_at=row.seen_at, now=now
+            )
+            counts["scored"] += 1
+            if row.score == score and row.score_components == components:
+                continue
+            await session.execute(
+                update(JobAnalysis)
+                .where(JobAnalysis.id == row.id)
+                .values(score=score, score_components=components)
+            )
+
+        # Jobs that are no longer eligible or flagged lose their score.
+        cleared = await session.execute(
+            update(JobAnalysis)
+            .where(
+                JobAnalysis.score.is_not(None),
+                or_(JobAnalysis.verdict.is_(None), JobAnalysis.verdict.not_in(SCORED_VERDICTS)),
+            )
+            .values(score=None, score_components=None)
+        )
+        counts["score_cleared"] += getattr(cleared, "rowcount", 0) or 0
+        await session.commit()
+
+
+async def _embed_profile(
+    session: AsyncSession,
+    profile: CandidateProfile,
+    embedder: EmbeddingProvider | None,
+    skills: list[str],
+    counts: Counter[str],
+) -> Vector | None:
+    if embedder is None:
+        return None
+    text = profile_text(profile.headline, profile.summary, skills)
+    try:
+        vector = (await embedder.embed_documents([text]))[0]
+    except Exception as exc:  # the model failed to load or run: score without it
+        logger.warning("Profile embedding failed (%s); scoring without it", type(exc).__name__)
+        counts["embedding_failed"] += 1
+        return None
+    await session.execute(
+        update(CandidateProfile).where(CandidateProfile.id == 1).values(embedding=vector)
+    )
+    return vector
+
+
+async def _embed_jobs(
+    session: AsyncSession,
+    embedder: EmbeddingProvider,
+    rows: list[Any],
+    parsed: dict[uuid.UUID, ExtractedJob],
+    counts: Counter[str],
+) -> dict[uuid.UUID, Vector]:
+    """Embed listings in batches; on a failure, the rest are scored without it."""
+    vectors: dict[uuid.UUID, Vector] = {}
+    for start in range(0, len(rows), EMBED_BATCH):
+        batch = rows[start : start + EMBED_BATCH]
+        texts = [job_text(r.title, parsed[r.id], r.raw_text) for r in batch]
+        try:
+            embedded = await embedder.embed_documents(texts)
+        except Exception as exc:
+            logger.warning("Job embedding failed (%s); scoring without it", type(exc).__name__)
+            counts["embedding_failed"] += len(rows) - start
+            break
+        for row, vector in zip(batch, embedded, strict=True):
+            vectors[row.id] = vector
+            await session.execute(
+                update(JobAnalysis).where(JobAnalysis.id == row.id).values(embedding=vector)
+            )
+        counts["embedded"] += len(batch)
+    return vectors

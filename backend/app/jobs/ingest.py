@@ -41,6 +41,7 @@ from app.jobs.sources.hn import HnWhoIsHiring
 from app.jobs.sources.lever import LeverBoard
 from app.jobs.sources.web_search import WebSearchFeed
 from app.llm.base import LLMProvider
+from app.rag.embeddings import EmbeddingProvider
 from app.web.fetch import USER_AGENT
 from app.web.search import SearchProvider, build_search_provider, web_search_enabled
 from app.web.ssrf import SafeTransport
@@ -78,6 +79,7 @@ async def run_ingestion(
     robots_transport: httpx.AsyncBaseTransport | None = None,
     search: SearchProvider | None = None,
     llm: LLMProvider | None = None,
+    embedder: EmbeddingProvider | None = None,
     sleep: Sleep = asyncio.sleep,
 ) -> RunSummary:
     """Start a run: fetch every feed, then analyse (extract with `llm`, judge in code),
@@ -86,6 +88,7 @@ async def run_ingestion(
 
     Both stages share one deadline (JOBS_RUN_TIMEOUT_S). Without `llm`, new
     listings are not extracted, but existing extractions are still re-judged.
+    Without `embedder`, scores leave out the semantic component.
     `feeds`, the transports, `search` and `sleep` are injectable for tests;
     by default feeds come from the watchlist and settings.
     """
@@ -116,7 +119,9 @@ async def run_ingestion(
             succeeded = await _run_feeds(
                 feeds, client, policy, session_factory, settings, counts, errors, deadline
             )
-        analysed = await _analyse(session_factory, settings, llm, counts, errors, deadline)
+        analysed = await _analyse(
+            session_factory, settings, llm, embedder, counts, errors, deadline
+        )
         if not errors:
             status = "completed"
         else:
@@ -236,6 +241,7 @@ async def _analyse(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     llm: LLMProvider | None,
+    embedder: EmbeddingProvider | None,
     counts: defaultdict[str, Counter[str]],
     errors: list[dict[str, str]],
     deadline: float,
@@ -247,7 +253,7 @@ async def _analyse(
     """
     try:
         async with asyncio.timeout_at(deadline):
-            outcome = await analyse_jobs(session_factory, settings, llm)
+            outcome = await analyse_jobs(session_factory, settings, llm, embedder)
     except TimeoutError:
         message = "run deadline reached during analysis; the rest waits for the next run"
         errors.append(_error("analysis", "analysis", "TimeoutError", message))

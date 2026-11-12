@@ -254,6 +254,21 @@ class Settings(BaseSettings):
     jobs_extract_max_attempts: int = Field(
         default=3, ge=1, description="Give up on a listing the model fails to parse this often."
     )
+    # Ranking (app/jobs/scoring.py explains each component and the defaults).
+    # Weights are relative: they are rescaled over the components that apply.
+    jobs_score_w_semantic: float = Field(default=0.30, ge=0)
+    jobs_score_w_technology: float = Field(default=0.25, ge=0)
+    jobs_score_w_experience: float = Field(default=0.20, ge=0)
+    jobs_score_w_location: float = Field(default=0.10, ge=0)
+    jobs_score_w_salary: float = Field(default=0.05, ge=0)
+    jobs_score_w_freshness: float = Field(default=0.10, ge=0)
+    jobs_score_freshness_half_life_days: float = Field(default=14.0, gt=0)
+    jobs_score_similarity_floor: float = Field(
+        default=0.55, description="Cosine similarity that maps to a semantic value of 0."
+    )
+    jobs_score_similarity_ceiling: float = Field(
+        default=0.80, description="Cosine similarity that maps to a semantic value of 1."
+    )
     jobs_denied_domains: list[str] = Field(
         default_factory=list,
         description="Extra domains never used (LinkedIn is always denied). JSON list.",
