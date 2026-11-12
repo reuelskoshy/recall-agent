@@ -431,6 +431,7 @@ its rule, outcome, detail and the listing's own sentence.
 | Required graduation year later than yours | reject (an earlier year only flags) |
 | Role family not in your role types | reject |
 | Location outside your allowed list | reject. A remote job passes if its region includes an allowed country (India matches APAC and Asia), or if it has no restriction |
+| In a sponsorship-only place (`sponsorship_locations`, e.g. United States) | pass if the listing offers visa sponsorship (with a verified quote); reject if it says it does not ("no sponsorship", "must be authorized to work in the US", "US citizens only"); flag if it does not say |
 | No location given | flag |
 | Minimum experience above yours | flag, with the size of the gap |
 | Internship with no graduation-year requirement | flag |
@@ -449,3 +450,16 @@ thread):
   because its quote did not match the text.
 - A US-only role was rejected on location.
 - Two remote roles open to India were judged eligible.
+
+**Visa sponsorship (added 2026-11-12).** US jobs are acceptable only with visa
+sponsorship. This is a profile preference, `sponsorship_locations` (migration
+0011), not a hard-coded country. The extraction schema gained
+`visa_sponsorship`, and the extractor version was bumped. Listings extracted by
+an older prompt are extracted again, within the per-run cap. In a live check on
+HN posts that mention visas:
+- A New York role saying "Visa sponsorship is not available." was rejected with
+  that sentence.
+- Roles in Zurich, Amsterdam and London that offer sponsorship were rejected,
+  because those places are not in the list.
+- One reply in six was not valid JSON: that counts as one attempt and is
+  retried on the next run.

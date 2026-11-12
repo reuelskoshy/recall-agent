@@ -39,6 +39,7 @@ Return ONLY this JSON object, no other text:
  "graduation_years": [],
  "degree_field": "",
  "salary": null,
+ "visa_sponsorship": "offered|not_offered|unknown",
  "technologies": [],
  "seniority_signals": [],
  "evidence": {}
@@ -66,6 +67,11 @@ Rules:
 - salary: annual amounts in whole units, or null. Indian formats: "12 LPA",
   "12 lakhs per annum" or "CTC 12L" -> 1200000 INR; "1.2 Cr" -> 12000000.
   {"min": 1200000, "max": 1800000, "currency": "INR", "period": "year"}.
+- visa_sponsorship: "offered" only if the listing says it sponsors work visas
+  (e.g. "visa sponsorship available", "we sponsor H-1B"). "not_offered" if it
+  says it does not ("no sponsorship", "must be authorized to work in the US
+  without sponsorship", "US citizens only", "security clearance required").
+  "unknown" if it does not say.
 - technologies: languages, frameworks, databases, cloud and tools named.
 - seniority_signals: short phrases copied word for word that imply seniority,
   e.g. "lead a team of engineers", "own the architecture", "mentor juniors".

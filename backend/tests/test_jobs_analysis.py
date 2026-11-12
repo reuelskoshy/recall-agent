@@ -272,6 +272,41 @@ async def test_per_run_cap_takes_the_newest_first() -> None:
     assert sorted(llm.calls) == ["Job 2", "Job 3"]
 
 
+async def test_listings_extracted_by_an_older_prompt_are_extracted_again() -> None:
+    await set_profile()
+    await add_job("Backend Engineer")
+    llm = KeyedLLM({"Backend Engineer": BENGALURU})
+    await analyse_jobs(SessionLocal, settings(), llm)
+    async with SessionLocal() as session:
+        await session.execute(update(JobAnalysis).values(extractor_version="extract-old"))
+        await session.commit()
+    await analyse_jobs(SessionLocal, settings(), llm)
+    await analyse_jobs(SessionLocal, settings(), llm)
+    assert llm.calls == ["Backend Engineer"] * 2  # once more, then up to date
+    row = (await analyses())["Backend Engineer"]
+    assert (row.extractor_version, row.verdict) == (EXTRACTOR_VERSION, "eligible")
+
+
+async def test_us_jobs_need_sponsorship_end_to_end() -> None:
+    await set_profile(sponsorship_locations=["United States"])
+    text = "Onsite in Austin, Texas. Visa sponsorship is available."
+    await add_job("Austin Engineer", text)
+    await add_job("Austin Silent", "Onsite in Austin, Texas.")
+    sponsored = {
+        **AUSTIN,
+        "visa_sponsorship": "offered",
+        "evidence": {
+            "locations": "Austin, Texas",
+            "visa_sponsorship": "Visa sponsorship is available",
+        },
+    }
+    llm = KeyedLLM({"Austin Engineer": sponsored, "Austin Silent": AUSTIN})
+    await analyse_jobs(SessionLocal, settings(), llm)
+    rows = await analyses()
+    assert rows["Austin Engineer"].verdict == "eligible"
+    assert rows["Austin Silent"].verdict == "flagged"
+
+
 async def test_closed_jobs_are_not_extracted() -> None:
     await set_profile()
     job_id = await add_job("Gone")

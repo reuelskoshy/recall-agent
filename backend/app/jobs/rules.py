@@ -20,10 +20,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.db.models import CandidateProfile
-from app.jobs.locations import judge_location
+from app.jobs.locations import judge_location, sponsorship_place
 from app.jobs.schemas import ExtractedJob, Reason, Verdict
 
-RULES_VERSION = "rules-2026-11-12"
+RULES_VERSION = "rules-2026-11-12b"  # + visa sponsorship
 UNVERIFIED = " The model's quote was not found in the listing, so this is a flag, not a rejection."
 
 JUNIOR_TITLE = re.compile(
@@ -50,6 +50,7 @@ class ProfileFacts:
     allowed_locations: list[str] = field(default_factory=list)
     remote_ok: bool = True
     role_families: list[str] = field(default_factory=lambda: ["engineering"])
+    sponsorship_locations: list[str] = field(default_factory=list)
 
     @classmethod
     def from_profile(cls, profile: CandidateProfile) -> "ProfileFacts":
@@ -59,6 +60,7 @@ class ProfileFacts:
             allowed_locations=list(profile.allowed_locations or []),
             remote_ok=bool(profile.remote_ok),
             role_families=list(profile.role_families or []),
+            sponsorship_locations=list(profile.sponsorship_locations or []),
         )
 
 
@@ -169,7 +171,43 @@ def location(job: ExtractedJob, facts: ProfileFacts, listing: Listing) -> Reason
         )
     if outcome == "unknown":
         return Reason(rule=rule, outcome="flag", detail="The listing gives no location.")
+    place = sponsorship_place(job, facts.sponsorship_locations, facts.remote_ok)
+    if place is not None:
+        return _sponsorship(job, listing, place, evidence)
     return _reject_or_flag(rule, f"Location: {detail}.", evidence)
+
+
+def _sponsorship(job: ExtractedJob, listing: Listing, place: str, located: str | None) -> Reason:
+    """Outside the allowed list, but somewhere acceptable with a work visa.
+
+    Offered -> pass (only with a verified quote). Explicitly not offered ->
+    reject (only with a verified quote). Not mentioned -> flag, to check by hand.
+    """
+    rule = "location"
+    quote = find_sentence(listing, job.evidence.get("visa_sponsorship"))
+    if job.visa_sponsorship == "offered":
+        if quote is None:
+            return Reason(
+                rule=rule,
+                outcome="flag",
+                detail=f"In {place}. The model says visa sponsorship is offered, but its "
+                "quote was not found in the listing. Check before applying.",
+                evidence=located,
+            )
+        return Reason(
+            rule=rule,
+            outcome="pass",
+            detail=f"In {place}, with visa sponsorship offered.",
+            evidence=quote,
+        )
+    if job.visa_sponsorship == "not_offered":
+        return _reject_or_flag(rule, f"In {place}, and no visa sponsorship.", quote)
+    return Reason(
+        rule=rule,
+        outcome="flag",
+        detail=f"In {place}, and the listing does not mention visa sponsorship.",
+        evidence=located,
+    )
 
 
 def experience(job: ExtractedJob, facts: ProfileFacts, listing: Listing) -> Reason:

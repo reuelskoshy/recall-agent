@@ -20,11 +20,12 @@ RoleFamily = Literal["engineering", "operations", "support", "other"]
 EmploymentType = Literal[
     "full_time", "internship", "apprenticeship", "contract", "part_time", "unknown"
 ]
+VisaSponsorship = Literal["offered", "not_offered", "unknown"]
 SalaryPeriod = Literal["year", "month", "hour", "unknown"]
 Outcome = Literal["reject", "flag", "pass", "not_checked"]
 Verdict = Literal["eligible", "flagged", "rejected"]
 
-EXTRACTOR_VERSION = "extract-2026-11-12"
+EXTRACTOR_VERSION = "extract-2026-11-12b"  # + visa_sponsorship
 EVIDENCE_FIELDS = (
     "is_job_listing",
     "locations",
@@ -35,6 +36,7 @@ EVIDENCE_FIELDS = (
     "graduation_years",
     "degree_field",
     "salary",
+    "visa_sponsorship",
 )
 
 
@@ -112,6 +114,9 @@ class ExtractedJob(BaseModel):
     """Graduation years (batches) the listing requires; empty when it sets none."""
     degree_field: str = ""
     salary: Salary | None = None
+    visa_sponsorship: VisaSponsorship = "unknown"
+    """offered: says it sponsors work visas. not_offered: says it does not, or
+    requires existing work authorisation or citizenship. unknown: says nothing."""
     technologies: list[str] = Field(default_factory=list)
     seniority_signals: list[str] = Field(default_factory=list)
     """Phrases copied from the listing that imply seniority, e.g. "lead a team"."""
@@ -124,6 +129,14 @@ class ExtractedJob(BaseModel):
         if isinstance(value, str):
             return value.strip().casefold() not in ("false", "no", "0")
         return value is not False and value != 0
+
+    @field_validator("visa_sponsorship", mode="before")
+    @classmethod
+    def _sponsorship(cls, value: Any) -> str:
+        label = _label(value)
+        aliases = {"yes": "offered", "true": "offered", "no": "not_offered", "false": "not_offered"}
+        label = aliases.get(label, label)
+        return label if label in ("offered", "not_offered") else "unknown"
 
     @field_validator("locations", mode="before")
     @classmethod

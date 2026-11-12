@@ -196,5 +196,23 @@ def judge_location(
     return "outside", f"{'; '.join(describe(loc) for loc in job.locations[:5])} not allowed"
 
 
+def sponsorship_place(job: ExtractedJob, places: list[str], remote_ok: bool) -> str | None:
+    """The first of the job's locations (or remote regions) inside `places`, if any.
+
+    Used for places the candidate accepts only with visa sponsorship.
+    """
+    if not places:
+        return None
+    for loc in job.locations:
+        if location_matches(loc, places):
+            return describe(loc)
+    if job.work_mode == "remote" and remote_ok:
+        wanted = {canonical(p) for p in places}
+        for region in job.remote_regions:
+            if canonical(region) in wanted:
+                return f"remote ({region})"
+    return None
+
+
 def describe(location: Location) -> str:
     return ", ".join(p for p in (location.city, location.region, location.country) if p) or "?"

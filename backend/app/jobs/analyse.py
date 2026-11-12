@@ -90,6 +90,11 @@ async def _pending_jobs(
                     JobAnalysis.extraction.is_(None),
                     JobAnalysis.extraction_attempts < settings.jobs_extract_max_attempts,
                 ),
+                # Extracted by an older prompt that lacks fields the rules now read.
+                and_(
+                    JobAnalysis.extraction.is_not(None),
+                    JobAnalysis.extractor_version != EXTRACTOR_VERSION,
+                ),
             ),
         )
         .order_by(Job.first_seen_at.desc(), Job.id.desc())

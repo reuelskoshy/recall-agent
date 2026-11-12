@@ -260,6 +260,115 @@ def test_feed_location_field_is_the_fallback_evidence() -> None:
     assert (r.outcome, r.evidence) == ("reject", "Seattle, WA")
 
 
+# ---- US jobs: only with visa sponsorship ------------------------------------------------
+
+ME_US = ProfileFacts(
+    graduation_year=2025,
+    allowed_locations=["India"],
+    sponsorship_locations=["United States"],
+)
+US_TEXT = (
+    "Backend engineer, onsite in Austin, Texas. "
+    "We sponsor H-1B visas for this role. "
+    "Applicants must be authorized to work in the US without sponsorship."
+)
+AUSTIN = [{"city": "Austin", "region": "Texas", "country": "United States"}]
+
+
+def us_job(sponsorship: str, quote: str | None = None, **fields: Any) -> ExtractedJob:
+    evidence = {"locations": "Austin, Texas"}
+    if quote:
+        evidence["visa_sponsorship"] = quote
+    return job(
+        locations=AUSTIN,
+        role_family="engineering",
+        visa_sponsorship=sponsorship,
+        evidence=evidence,
+        **fields,
+    )
+
+
+def us_reason(extracted: ExtractedJob, facts: ProfileFacts = ME_US) -> tuple[str, Reason]:
+    verdict, reasons = run(extracted, facts, listing(text=US_TEXT))
+    return verdict, reason(reasons, "location")
+
+
+def test_us_job_offering_sponsorship_is_eligible() -> None:
+    verdict, r = us_reason(us_job("offered", "We sponsor H-1B visas"))
+    assert (verdict, r.outcome) == ("eligible", "pass")
+    assert r.detail == "In Austin, Texas, United States, with visa sponsorship offered."
+    assert r.evidence == "We sponsor H-1B visas for this role."
+
+
+def test_us_job_without_sponsorship_is_rejected_with_the_sentence() -> None:
+    verdict, r = us_reason(us_job("not_offered", "authorized to work in the US without"))
+    assert (verdict, r.outcome) == ("rejected", "reject")
+    assert r.evidence == ("Applicants must be authorized to work in the US without sponsorship.")
+
+
+def test_us_job_that_does_not_mention_sponsorship_is_flagged() -> None:
+    verdict, r = us_reason(us_job("unknown"))
+    assert (verdict, r.outcome) == ("flagged", "flag")
+    assert "does not mention visa sponsorship" in r.detail
+    assert r.evidence == "Backend engineer, onsite in Austin, Texas."
+
+
+def test_unverified_sponsorship_claims_only_flag() -> None:
+    _, offered = us_reason(us_job("offered", "relocation and green card provided"))
+    assert offered.outcome == "flag" and "Check before applying" in offered.detail
+    _, refused = us_reason(us_job("not_offered", "US citizens only"))
+    assert refused.outcome == "flag" and refused.evidence is None
+
+
+def test_remote_us_only_follows_the_same_rule() -> None:
+    remote = job(
+        work_mode="remote",
+        role_family="engineering",
+        remote_regions=["US"],
+        visa_sponsorship="offered",
+        evidence={"visa_sponsorship": "We sponsor H-1B visas"},
+    )
+    verdict, r = us_reason(remote)
+    assert verdict == "eligible" and r.detail.startswith("In remote (US)")
+    no_remote = ProfileFacts(
+        allowed_locations=["India"], sponsorship_locations=["United States"], remote_ok=False
+    )
+    # Not wanting remote work: sponsorship does not rescue it (no location quote: a flag).
+    blocked = us_reason(remote, no_remote)[1]
+    assert blocked.outcome == "flag" and "remote work is not in your preferences" in blocked.detail
+
+
+def test_sponsorship_applies_only_to_listed_places() -> None:
+    london = job(
+        locations=[{"city": "London", "country": "United Kingdom"}],
+        visa_sponsorship="offered",
+        evidence={"locations": "Austin, Texas", "visa_sponsorship": "We sponsor H-1B visas"},
+    )
+    assert us_reason(london)[1].outcome == "reject"
+    no_pref = ProfileFacts(allowed_locations=["India"])
+    assert us_reason(us_job("offered", "We sponsor H-1B visas"), no_pref)[1].outcome == "reject"
+
+
+def test_india_jobs_ignore_sponsorship() -> None:
+    blr = job(locations=[{"city": "Bengaluru"}], visa_sponsorship="not_offered")
+    assert us_reason(blr)[1].outcome == "pass"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Offered", "offered"),
+        ("not offered", "not_offered"),
+        ("No", "not_offered"),
+        (True, "offered"),
+        (None, "unknown"),
+        ("maybe", "unknown"),
+    ],
+)
+def test_visa_sponsorship_coercion(value: Any, expected: str) -> None:
+    assert job(visa_sponsorship=value).visa_sponsorship == expected
+
+
 # ---- Flags --------------------------------------------------------------------------------
 
 

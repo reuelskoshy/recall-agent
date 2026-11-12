@@ -326,6 +326,11 @@ class CandidateProfile(Base):
         ARRAY(String(200)), default=list, server_default="{}"
     )
     remote_ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Places outside `allowed_locations` that are acceptable only with visa
+    # sponsorship, e.g. {"United States"}.
+    sponsorship_locations: Mapped[list[str]] = mapped_column(
+        ARRAY(String(200)), default=list, server_default="{}"
+    )
     role_families: Mapped[list[str]] = mapped_column(
         ARRAY(String(30)), default=lambda: ["engineering"], server_default="{engineering}"
     )
